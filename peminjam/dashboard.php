@@ -66,13 +66,14 @@ check_role('peminjam');
         }
 
         body {
-            overflow: hidden;
             font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             font-weight: 300;
             background-color: #f5f7fb;
             color: #333;
         }
-
+    body::-webkit-scrollbar {
+    display: none; /* Menyembunyikan scrollbar untuk Chrome, Safari, Opera */
+}
         /* Sidebar */
         .sidebar {
             position: fixed;
