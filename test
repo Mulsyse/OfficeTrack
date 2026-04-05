@@ -1,0 +1,35 @@
+<?php
+// 1. Mulai sesi di SETIAP halaman yang menggunakan data sesi
+session_start();
+
+// 2. Cek apakah pengguna sudah login
+if (!isset($_SESSION['user'])) {
+    // Jika belum login, arahkan ke halaman login
+    header("Location: ../auth/login.php");
+    exit(); // Hentikan eksekusi skrip selanjutnya
+}
+
+// 3. (PENTING) Cek peran pengguna
+// Tentukan siapa saja yang BOLEH mengakses halaman ini.
+// Misalnya, halaman daftar alat hanya untuk 'peminjam'.
+// Jika admin dan petugas juga boleh melihat, tambahkan ke dalam array.
+ $allowed_roles = ['peminjam']; 
+
+// Jika role user yang login TIDAK ADA di dalam daftar $allowed_roles
+if (!in_array($_SESSION['user']['role'], $allowed_roles)) {
+    // Arahkan mereka ke dashboard masing-masing (ini yang menyebabkan Anda kembali ke dashboard)
+    // atau Anda bisa arahkan ke halaman "Akses Ditolak"
+    header("Location: dashboard.php"); 
+    exit();
+}
+
+// --- Sisanya dari kode Anda dimulai dari sini ---
+
+// Include file helpers yang berisi fungsi-fungsi penting
+require_once '../config/helpers.php';
+require_once '../config/database.php';
+
+// Dapatkan koneksi database dari kelas Database
+ $pdo = Database::getConnection();
+
+// ... dan seterusnya

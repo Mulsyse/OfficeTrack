@@ -1,98 +1,101 @@
 <?php
+// Memulai session
 session_start();
-require_once '../config/database.php';
 
-// Check login and role
+// Memuat file koneksi database dan helper
+require_once '../config/database.php';
+require_once '../config/helpers.php';  // Memuat fungsi-fungsi bantu
+
+// --- TAMBAHKAN BARIS INI ---
+// Ambil koneksi database dari kelas Database dan simpan ke variabel $conn
+ $conn = Database::getConnection();
+
+// Periksa login dan role user
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+// Cek dan ambil pesan dari session untuk ditampilkan
+ $success_message = isset($_SESSION['success']) ? $_SESSION['success'] : '';
+ $error_message = isset($_SESSION['error']) ? $_SESSION['error'] : '';
 
-// --- TAMBAHKAN KODE INI ---
-// Cek dan ambil pesan dari session
- $success = isset($_SESSION['success']) ? $_SESSION['success'] : '';
- $error = isset($_SESSION['error']) ? $_SESSION['error'] : '';
-
-// Hapus pesan dari session agar tidak muncul lagi
+// Hapus pesan dari session agar tidak muncul lagi saat halaman direfresh
 unset($_SESSION['success']);
 unset($_SESSION['error']);
-// --- SELESAI ---
 
-// Handle delete
+// --- PROSES PENGELOLAAN DATA ---
+
+// Handle Hapus Data
 if (isset($_GET['delete'])) {
     $id = $_GET['delete'];
-    $stmt = $conn->prepare("DELETE FROM kategori WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $stmt->close();
-    
-    log_activity($_SESSION['user_id'], "Menghapus kategori dengan ID: $id");
+    try {
+        $sql = "DELETE FROM kategori WHERE id = :id";
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':id', $id, PDO::PARAM_INT);
+        $stmt->execute();
+
+        log_activity($_SESSION['user']['id'], "Menghapus kategori dengan ID: $id");
+        $_SESSION['success'] = "Kategori berhasil dihapus!";
+    } catch (PDOException $e) {
+        $_SESSION['error'] = "Gagal menghapus kategori: " . $e->getMessage();
+    }
     header("Location: kategori.php");
     exit();
 }
 
-// Get all kategori
- $stmt = $conn->prepare("SELECT * FROM kategori ORDER BY nama_kategori");
- $stmt->execute();
- $result = $stmt->get_result();
-
-// Handle add/edit
-// Handle add/edit
- $error = '';
- $success = '';
-
+// Handle Tambah/Edit Data (dari POST form)
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Cek apakah kunci 'nama_kategori' ada di $_POST
-    if (!isset($_POST['nama_kategori']) || empty(trim($_POST['nama_kategori']))) {
-        $error = "Nama kategori tidak boleh kosong!";
+    // Ambil dan bersihkan input
+    $nama_kategori = sanitize_input($_POST['nama_kategori']);
+    $id = isset($_POST['id']) ? $_POST['id'] : null;
+
+    // Validasi input
+    if (empty($nama_kategori)) {
+        $_SESSION['error'] = "Nama kategori tidak boleh kosong!";
     } else {
-        $nama_kategori = sanitize_input($_POST['nama_kategori']);
-        
-        if (isset($_POST['id']) && !empty($_POST['id'])) {
-            // Edit
-            $id = $_POST['id'];
-            $sql = "UPDATE kategori SET nama_kategori = ? WHERE id = ?";
-            $stmt = $conn->prepare($sql);
-            if ($stmt === false) {
-                $error = "Error preparing statement (UPDATE): " . $conn->error;
+        try {
+            if (!empty($id)) {
+                // --- PROSES EDIT ---
+                $sql = "UPDATE kategori SET nama_kategori = :nama_kategori WHERE id = :id";
+                $stmt = $conn->prepare($sql);
+                $stmt->bindParam(':nama_kategori', $nama_kategori);
+                $stmt->bindParam(':id', $id, PDO::PARAM_INT);
+                $stmt->execute();
+
+                log_activity($_SESSION['user']['id'], "Mengedit kategori menjadi: $nama_kategori");
+                $_SESSION['success'] = "Kategori berhasil diperbarui!";
             } else {
-                $stmt->bind_param("si", $nama_kategori, $id);
-                if ($stmt->execute()) {
-                    $success = "Kategori berhasil diperbarui!";
-                    log_activity($_SESSION['user_id'], "Mengedit kategori: $nama_kategori");
-                    // header("Location: kategori.php"); // Nonaktifkan dulu untuk melihat pesan
-                    // exit();
-                } else {
-                    $error = "Gagal memperbarui kategori! Pesan Error: " . $stmt->error;
-                }
-                $stmt->close();
+                // --- PROSES TAMBAH ---
+                $sql = "INSERT INTO kategori (nama_kategori) VALUES (:nama_kategori)";
+                $stmt = $conn->prepare($sql);
+                $stmt->bindParam(':nama_kategori', $nama_kategori);
+                $stmt->execute();
+
+                log_activity($_SESSION['user']['id'], "Menambahkan kategori baru: $nama_kategori");
+                $_SESSION['success'] = "Kategori berhasil ditambahkan!";
             }
-        } else {
-            // Add
-            $sql = "INSERT INTO kategori (nama_kategori) VALUES (?)";
-            $stmt = $conn->prepare($sql);
-            if ($stmt === false) {
-                // Ini akan menampilkan error jika prepare() gagal, misalnya karena nama tabel/kolom salah
-                $error = "Error preparing statement (INSERT): " . $conn->error;
+        } catch (PDOException $e) {
+            // Cek apakah error karena duplikat data (kode error 1062 untuk duplikat entry)
+            if ($e->errorInfo[1] == 1062) {
+                $_SESSION['error'] = "Gagal! Nama kategori '$nama_kategori' sudah ada.";
             } else {
-                $stmt->bind_param("s", $nama_kategori);
-            if ($stmt->execute()) {
-                // Simpan pesan sukses ke session
-                $_SESSION['success'] = "Kategori berhasil disimpan!";
-                log_activity($_SESSION['user_id'], "Menambahkan kategori: $nama_kategori");
-                
-                // Redirect ke halaman yang sama untuk mencegah resubmit
-                header("Location: kategori.php");
-                exit(); // Penting untuk menghentikan script
-            } else {
-                // Simpan pesan error ke session
-                $_SESSION['error'] = "Gagal menyimpan kategori! Pesan Error: " . $stmt->error;
-            }
-                $stmt->close();
+                $_SESSION['error'] = "Terjadi kesalahan: " . $e->getMessage();
             }
         }
     }
+    // Redirect untuk mencegah resubmission form saat refresh
+    header("Location: kategori.php");
+    exit();
+}
+
+// --- AMBIL DATA UNTUK DITAMPILKAN ---
+ $kategori_list = [];
+try {
+    $sql = "SELECT * FROM kategori ORDER BY nama_kategori ASC";
+    $stmt = $conn->prepare($sql);
+    $stmt->execute();
+    $kategori_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $error_message = "Gagal memuat data kategori: " . $e->getMessage();
 }
 ?>
 
@@ -105,6 +108,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <!-- CSS Anda tetap sama, saya tidak menuliskannya ulang untuk menghemat ruang -->
     <style>
         :root {
             --primary-color: #4361ee;
@@ -477,7 +481,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -531,11 +535,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <h1 class="page-title">Data Kategori</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;"><?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;"><?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($_SESSION['user']['nama'], 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -546,12 +550,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         </div>
 
         <!-- Alerts -->
-        <?php if ($error): ?>
-            <div class="alert alert-danger-custom alert-custom"><?php echo $error; ?></div>
+        <?php if ($error_message): ?>
+            <div class="alert alert-danger-custom alert-custom"><?php echo $error_message; ?></div>
         <?php endif; ?>
         
-        <?php if ($success): ?>
-            <div class="alert alert-success-custom alert-custom"><?php echo $success; ?></div>
+        <?php if ($success_message): ?>
+            <div class="alert alert-success-custom alert-custom"><?php echo $success_message; ?></div>
         <?php endif; ?>
 
         <!-- Kategori Table -->
@@ -573,23 +577,29 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php $no = 1; while ($kategori = $result->fetch_assoc()): ?>
-                        <tr>
-                            <td><?php echo $no++; ?></td>
-                            <td><?php echo $kategori['nama_kategori']; ?></td>
-                            <td><?php echo date('d/m/Y', strtotime($kategori['created_at'])); ?></td>
-                            <td>
-                                <div class="action-buttons">
-                                    <button class="btn-action btn-edit" onclick="editKategori(<?php echo $kategori['id']; ?>, '<?php echo $kategori['nama_kategori']; ?>')">
-                                        <i data-lucide="edit-2"></i>
-                                    </button>
-                                    <a href="kategori.php?delete=<?php echo $kategori['id']; ?>" class="btn-action btn-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus kategori ini?')">
-                                        <i data-lucide="trash-2"></i>
-                                    </a>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endwhile; ?>
+                        <?php $no = 1; if (!empty($kategori_list)): ?>
+                            <?php foreach ($kategori_list as $kategori): ?>
+                            <tr>
+                                <td><?php echo $no++; ?></td>
+                                <td><?php echo htmlspecialchars($kategori['nama_kategori']); ?></td>
+                                <td><?php echo date('d/m/Y', strtotime($kategori['created_at'])); ?></td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <button class="btn-action btn-edit" onclick="editKategori(<?php echo $kategori['id']; ?>, '<?php echo htmlspecialchars($kategori['nama_kategori'], ENT_QUOTES); ?>')">
+                                            <i data-lucide="edit-2"></i>
+                                        </button>
+                                        <a href="kategori.php?delete=<?php echo $kategori['id']; ?>" class="btn-action btn-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus kategori ini?')">
+                                            <i data-lucide="trash-2"></i>
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="4" class="text-center">Belum ada data kategori.</td>
+                            </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>
@@ -604,7 +614,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <h5 class="modal-title" id="modalTitle">Tambah Kategori</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST" action="">
+                <form method="POST" action="kategori.php">
                     <div class="modal-body">
                         <input type="hidden" id="kategoriId" name="id">
                         <div class="mb-3">
@@ -634,11 +644,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Handle dropdown toggles
         document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(element => {
             element.addEventListener('click', function() {
-                // Toggle aria-expanded attribute
                 const isExpanded = this.getAttribute('aria-expanded') === 'true';
                 this.setAttribute('aria-expanded', !isExpanded);
-                
-                // Reinitialize Lucide icons to ensure proper rendering
                 setTimeout(() => {
                     lucide.createIcons();
                 }, 10);
@@ -650,9 +657,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             document.getElementById('modalTitle').textContent = 'Edit Kategori';
             document.getElementById('kategoriId').value = id;
             document.getElementById('nama_kategori').value = nama;
-            new bootstrap.Modal(document.getElementById('kategoriModal')).show();
+            const modal = new bootstrap.Modal(document.getElementById('kategoriModal'));
+            modal.show();
             
-            // Reinitialize Lucide icons after modal opens
             setTimeout(() => {
                 lucide.createIcons();
             }, 100);

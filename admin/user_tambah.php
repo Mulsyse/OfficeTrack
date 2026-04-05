@@ -1,54 +1,71 @@
 <?php
 session_start();
 require_once '../config/database.php';
+// PERBAIKAN 1: Tambahkan helpers.php
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('admin');
 
 // Handle form submission
- $error = '';
- $success = '';
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nama = $_POST['nama'];
-    $username = $_POST['username'];
-    $password = $_POST['password'];
-    $role = $_POST['role'];
-    
+    // PERBAIKAN 2: Ambil dan sanitasi input dengan filter_input
+    $nama = filter_input(INPUT_POST, 'nama', FILTER_SANITIZE_STRING);
+    $username = filter_input(INPUT_POST, 'username', FILTER_SANITIZE_STRING);
+    $password = $_POST['password']; // Tidak perlu disanitasi, akan di-hash
+    $role = filter_input(INPUT_POST, 'role', FILTER_SANITIZE_STRING);
+
     // Validate input
     if (empty($nama) || empty($username) || empty($password) || empty($role)) {
-        $error = "Semua field harus diisi!";
+        $_SESSION['error'] = "Semua field harus diisi!";
+        // Simpan data yang sudah diisi untuk ditampilkan kembali
+        $_SESSION['old'] = $_POST;
     } elseif (strlen($password) < 6) {
-        $error = "Password minimal 6 karakter!";
+        $_SESSION['error'] = "Password minimal 6 karakter!";
+        $_SESSION['old'] = $_POST;
     } else {
-        $db = new Database();
-        $conn = $db->getConnection();
-        
-        // Check if username already exists
-        $stmt = $conn->prepare("SELECT id FROM users WHERE username = ?");
-        $stmt->bind_param("s", $username);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if ($result->num_rows > 0) {
-            $error = "Username sudah digunakan!";
-        } else {
-            // Insert new user
-            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("INSERT INTO users (nama, username, password, role) VALUES (?, ?, ?, ?)");
-            $stmt->bind_param("ssss", $nama, $username, $hashed_password, $role);
+        try {
+            $db = new Database();
+            $conn = $db->getConnection();
             
-            if ($stmt->execute()) {
-                log_activity($_SESSION['user_id'], "Menambahkan user baru: $nama");
-                $success = "User berhasil ditambahkan!";
+            // PERBAIKAN 3: Konversi ke PDO
+            // Check if username already exists
+            $stmt = $conn->prepare("SELECT id FROM users WHERE username = :username");
+            $stmt->execute(['username' => $username]);
+            
+            if ($stmt->rowCount() > 0) {
+                $_SESSION['error'] = "Username sudah digunakan!";
+                $_SESSION['old'] = $_POST;
+            } else {
+                // Insert new user
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("INSERT INTO users (nama, username, password, role) VALUES (:nama, :username, :password, :role)");
+                
+                // PERBAIKAN 4: Gunakan parameter binding yang benar untuk PDO
+                $stmt->execute([
+                    'nama' => $nama,
+                    'username' => $username,
+                    'password' => $hashed_password,
+                    'role' => $role
+                ]);
+                
+                // PERBAIKAN 5: Sesuaikan akses session untuk log_activity
+                log_activity($_SESSION['user']['id'], "Menambahkan user baru: $nama");
+                $_SESSION['success'] = "User berhasil ditambahkan!";
                 header("Location: users.php");
                 exit();
-            } else {
-                $error = "Gagal menambahkan user!";
             }
+        } catch (PDOException $e) {
+            // PERBAIKAN 6: Tangani error database
+            $_SESSION['error'] = "Gagal menambahkan user: " . $e->getMessage();
+            $_SESSION['old'] = $_POST;
         }
-        $stmt->close();
+    }
+    // Redirect jika ada error untuk mencegah pengiriman ulang formulir
+    if (isset($_SESSION['error'])) {
+        header("Location: user_tambah.php");
+        exit();
     }
 }
 ?>
@@ -264,6 +281,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border: none;
             display: inline-flex;
             align-items: center;
+            text-decoration: none;
         }
 
         .btn-primary-custom {
@@ -275,6 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             background-color: var(--secondary-color);
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(67, 97, 238, 0.3);
+            color: white;
         }
 
         .btn-secondary-custom {
@@ -286,6 +305,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             background-color: #5a6268;
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(108, 117, 125, 0.3);
+            color: white;
         }
 
         /* Alerts */
@@ -412,7 +432,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -420,11 +440,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <span class="menu-text">Dashboard</span>
             </a>
             <!-- Master Data Dropdown -->
-            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#masterDataDropdown" aria-expanded="false">
+            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#masterDataDropdown" aria-expanded="true">
                 <i data-lucide="database" class="menu-icon"></i>
                 <span class="menu-text">Master Data</span>
                 <i data-lucide="chevron-down" class="menu-arrow"></i>
             </div>
+            <!-- PERBAIKAN 7: Tambahkan kelas 'show' agar dropdown terbuka -->
             <div class="collapse dropdown-menu-custom show" id="masterDataDropdown">
                 <a href="users.php" class="menu-item active">
                     <span class="menu-text">Data User</span>
@@ -469,11 +490,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <h1 class="page-title">Tambah User</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN 8: Sesuaikan akses session -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -487,26 +509,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="form-card">
             <div class="card-header-custom">
                 <h5>Form Tambah User</h5>
-                <span class="badge-custom badge-admin">
-                    User Baru
-                </span>
             </div>
             <div class="card-body-custom">
-                <?php if ($error): ?>
-                    <div class="alert-custom alert-danger-custom">
-                        <i data-lucide="alert-circle" style="margin-right: 10px;"></i>
-                        <?php echo $error; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <?php if ($success): ?>
-                    <div class="alert-custom alert-success-custom">
-                        <i data-lucide="check-circle" style="margin-right: 10px;"></i>
-                        <?php echo $success; ?>
+                <!-- PERBAIKAN 9: Tampilkan notifikasi dari session -->
+                <?php if (isset($_SESSION['error'])): ?>
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <?php 
+                            echo htmlspecialchars($_SESSION['error']); 
+                            unset($_SESSION['error']);
+                            // Simpan juga data lama untuk diisi kembali di form
+                            $old_data = $_SESSION['old'] ?? [];
+                            unset($_SESSION['old']);
+                        ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 <?php endif; ?>
 
-                <form method="POST" action="">
+                <form method="POST" action="user_tambah.php">
                     <div class="form-row">
                         <div class="form-col">
                             <div class="form-group">
@@ -514,7 +533,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <i data-lucide="user" class="icon-sm"></i>
                                     Nama Lengkap
                                 </label>
-                                <input type="text" class="form-control" id="nama" name="nama" required>
+                                <!-- PERBAIKAN 10: Isi kembali nilai form jika ada error -->
+                                <input type="text" class="form-control" id="nama" name="nama" required value="<?php echo htmlspecialchars($old_data['nama'] ?? ''); ?>">
                             </div>
                         </div>
                         <div class="form-col">
@@ -523,7 +543,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <i data-lucide="at-sign" class="icon-sm"></i>
                                     Username
                                 </label>
-                                <input type="text" class="form-control" id="username" name="username" required>
+                                <input type="text" class="form-control" id="username" name="username" required value="<?php echo htmlspecialchars($old_data['username'] ?? ''); ?>">
                             </div>
                         </div>
                     </div>
@@ -550,9 +570,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </label>
                                 <select class="form-select" id="role" name="role" required>
                                     <option value="">Pilih Role</option>
-                                    <option value="admin">Admin</option>
-                                    <option value="petugas">Petugas</option>
-                                    <option value="peminjam">Peminjam</option>
+                                    <option value="admin" <?php echo (isset($old_data['role']) && $old_data['role'] == 'admin') ? 'selected' : ''; ?>>Admin</option>
+                                    <option value="petugas" <?php echo (isset($old_data['role']) && $old_data['role'] == 'petugas') ? 'selected' : ''; ?>>Petugas</option>
+                                    <option value="peminjam" <?php echo (isset($old_data['role']) && $old_data['role'] == 'peminjam') ? 'selected' : ''; ?>>Peminjam</option>
                                 </select>
                             </div>
                         </div>
@@ -584,7 +604,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         });
         
         // Handle dropdown arrows rotation
-        document.querySelectorAll('.dropdown-toggle').forEach(item => {
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(item => {
             item.addEventListener('click', function() {
                 const expanded = this.getAttribute('aria-expanded') === 'true';
                 this.setAttribute('aria-expanded', !expanded);

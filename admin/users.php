@@ -1,31 +1,52 @@
 <?php
+// Memulai session
 session_start();
-require_once '../config/database.php';
 
-// Check login and role
+// Memuat file konfigurasi dan helper
+require_once '../config/database.php';
+require_once '../config/helpers.php';
+
+// Cek login dan role
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+$conn = Database::getConnection();
+
 
 // Handle delete
 if (isset($_GET['delete'])) {
-    $id = $_GET['delete'];
-    $stmt = $conn->prepare("DELETE FROM users WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $stmt->close();
-    
-    log_activity($_SESSION['user_id'], "Menghapus user dengan ID: $id");
+    // PERBAIKAN 1: Validasi ID
+    $id = filter_input(INPUT_GET, 'delete', FILTER_VALIDATE_INT);
+    if ($id) {
+        try {
+            // PERBAIKAN 2: Konversi ke PDO
+            $stmt = $conn->prepare("DELETE FROM users WHERE id = :id");
+            $stmt->execute(['id' => $id]);
+
+            // PERBAIKAN 3: Sesuaikan akses session dan log aktivitas
+            log_activity($_SESSION['user']['id'], "Menghapus user dengan ID: $id");
+            
+            // PERBAIKAN 4: Tambahkan notifikasi sukses
+            $_SESSION['success'] = "User berhasil dihapus.";
+
+        } catch (PDOException $e) {
+            // Jika terjadi error (misalnya foreign key constraint)
+            $_SESSION['error'] = "Gagal menghapus user. User mungkin masih memiliki data terkait.";
+        }
+    }
     header("Location: users.php");
     exit();
 }
 
-// Get all users
- $stmt = $conn->prepare("SELECT * FROM users ORDER BY created_at DESC");
- $stmt->execute();
- $result = $stmt->get_result();
+// PERBAIKAN 5: Konversi query ke PDO
+try {
+    $stmt = $conn->query("SELECT * FROM users ORDER BY created_at DESC");
+    $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    // Jika query gagal, set array kosong dan tampilkan error
+    $users = [];
+    $_SESSION['error'] = "Gagal memuat data user.";
+}
 ?>
 
 <!DOCTYPE html>
@@ -38,6 +59,7 @@ if (isset($_GET['delete'])) {
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
+        /* ... (CSS tidak berubah, saya akan biarkan seperti itu) ... */
         :root {
             --primary-color: #4361ee;
             --secondary-color: #3f37c9;
@@ -195,6 +217,7 @@ if (isset($_GET['delete'])) {
             display: flex;
             align-items: center;
             transition: all 0.2s ease;
+            text-decoration: none;
         }
 
         .btn-add:hover {
@@ -247,7 +270,7 @@ if (isset($_GET['delete'])) {
             color: var(--warning-color);
         }
 
-        .badge-user {
+        .badge-peminjam {
             background-color: rgba(0, 180, 216, 0.1);
             color: var(--info-color);
         }
@@ -266,6 +289,7 @@ if (isset($_GET['delete'])) {
             justify-content: center;
             border: none;
             transition: all 0.2s ease;
+            text-decoration: none;
         }
 
         .btn-edit {
@@ -323,7 +347,7 @@ if (isset($_GET['delete'])) {
                 padding: 10px 15px;
             }
         }
-                .menu-arrow {
+        .menu-arrow {
             margin-left: auto;
             transition: transform 0.3s ease;
         }
@@ -338,7 +362,7 @@ if (isset($_GET['delete'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -392,11 +416,12 @@ if (isset($_GET['delete'])) {
                 <h1 class="page-title">Data User</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;"><?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN 6: Sesuaikan akses session -->
+                <span style="margin-right: 10px;"><?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -405,6 +430,20 @@ if (isset($_GET['delete'])) {
                 </div>
             </div>
         </div>
+
+        <!-- Notifikasi -->
+        <?php if (isset($_SESSION['success'])): ?>
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($_SESSION['success']); unset($_SESSION['success']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
 
         <!-- User Table -->
         <div class="table-card">
@@ -427,29 +466,36 @@ if (isset($_GET['delete'])) {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php $no = 1; while ($user = $result->fetch_assoc()): ?>
-                        <tr>
-                            <td><?php echo $no++; ?></td>
-                            <td><?php echo $user['nama']; ?></td>
-                            <td><?php echo $user['username']; ?></td>
-                            <td>
-                                <span class="badge-custom badge-<?php echo $user['role']; ?>">
-                                    <?php echo ucfirst($user['role']); ?>
-                                </span>
-                            </td>
-                            <td><?php echo date('d/m/Y', strtotime($user['created_at'])); ?></td>
-                            <td>
-                                <div class="action-buttons">
-                                    <a href="user_edit.php?id=<?php echo $user['id']; ?>" class="btn-action btn-edit">
-                                        <i data-lucide="edit-2"></i>
-                                    </a>
-                                    <a href="users.php?delete=<?php echo $user['id']; ?>" class="btn-action btn-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus user ini?')">
-                                        <i data-lucide="trash-2"></i>
-                                    </a>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endwhile; ?>
+                        <?php $no = 1; if (!empty($users)): ?>
+                            <?php foreach ($users as $user): ?>
+                            <tr>
+                                <td><?php echo $no++; ?></td>
+                                <!-- PERBAIKAN 7: Sanitasi semua output dari database -->
+                                <td><?php echo htmlspecialchars($user['nama']); ?></td>
+                                <td><?php echo htmlspecialchars($user['username']); ?></td>
+                                <td>
+                                    <span class="badge-custom badge-<?php echo htmlspecialchars($user['role']); ?>">
+                                        <?php echo htmlspecialchars(ucfirst($user['role'])); ?>
+                                    </span>
+                                </td>
+                                <td><?php echo date('d/m/Y', strtotime($user['created_at'])); ?></td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <a href="user_edit.php?id=<?php echo $user['id']; ?>" class="btn-action btn-edit" title="Edit">
+                                            <i data-lucide="edit-2"></i>
+                                        </a>
+                                        <a href="users.php?delete=<?php echo $user['id']; ?>" class="btn-action btn-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus user ini?')" title="Hapus">
+                                            <i data-lucide="trash-2"></i>
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="6" class="text-center">Tidak ada data user.</td>
+                            </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>

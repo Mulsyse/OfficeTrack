@@ -1,28 +1,27 @@
 <?php
 session_start();
+// --- PERUBAHAN 1: Tambahkan require untuk helpers.php ---
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERUBAHAN 2: Gunakan cara baru untuk mendapatkan koneksi PDO ---
+ $pdo = Database::getConnection();
 
-// Get kategori for dropdown
- $stmt_kategori = $conn->prepare("SELECT * FROM kategori ORDER BY nama_kategori");
- $stmt_kategori->execute();
- $result_kategori = $stmt_kategori->get_result();
+// --- PERUBAHAN 3: Ubah query kategori ke sintaks PDO ---
+// Get kategori untuk dropdown
+ $stmt_kategori = $pdo->query("SELECT * FROM kategori ORDER BY nama_kategori");
 
+// --- PERUBAHAN 4: Ubah query pengambilan data alat ke sintaks PDO ---
 // Get alat data
 if (isset($_GET['id'])) {
     $id = $_GET['id'];
-    $stmt = $conn->prepare("SELECT * FROM alat WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $alat = $result->fetch_assoc();
-    $stmt->close();
+    $stmt = $pdo->prepare("SELECT * FROM alat WHERE id = ?");
+    $stmt->execute([$id]);
+    $alat = $stmt->fetch();
     
     if (!$alat) {
         header("Location: alat.php");
@@ -38,24 +37,27 @@ if (isset($_GET['id'])) {
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $nama_alat = sanitize_input($_POST['nama_alat']);
-    $kategori_id = $_POST['kategori_id'] ?: null;
+    $kategori_id = !empty($_POST['kategori_id']) ? $_POST['kategori_id'] : null;
     $stok = $_POST['stok'];
     $kondisi = $_POST['kondisi'];
     $deskripsi = sanitize_input($_POST['deskripsi']);
     
-    // Update alat
-    $stmt = $conn->prepare("UPDATE alat SET nama_alat = ?, kategori_id = ?, stok = ?, kondisi = ?, deskripsi = ? WHERE id = ?");
-    $stmt->bind_param("siissi", $nama_alat, $kategori_id, $stok, $kondisi, $deskripsi, $id);
+    // --- PERUBAHAN 5: Ubah query update ke sintaks PDO ---
+    $stmt = $pdo->prepare("UPDATE alat SET nama_alat = ?, kategori_id = ?, stok = ?, kondisi = ?, deskripsi = ? WHERE id = ?");
     
-    if ($stmt->execute()) {
-        log_activity($_SESSION['user_id'], "Mengedit alat: $nama_alat");
-        $success = "Alat berhasil diperbarui!";
+    if ($stmt->execute([$nama_alat, $kategori_id, $stok, $kondisi, $deskripsi, $id])) {
+        // --- PERUBAHAN 6: Ganti log_activity() dengan query PDO langsung ---
+        // Log aktivitas edit
+        $log_stmt = $pdo->prepare("INSERT INTO log_aktivitas (user_id, aktivitas, waktu) VALUES (?, ?, NOW())");
+        $log_stmt->execute([$_SESSION['user']['id'], "Mengedit alat: $nama_alat"]);
+        
+        // Redirect setelah berhasil
         header("Location: alat.php");
         exit();
     } else {
         $error = "Gagal memperbarui alat!";
     }
-    $stmt->close();
+    // --- PERUBAHAN 7: Tidak perlu $stmt->close() di PDO ---
 }
 ?>
 
@@ -341,7 +343,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -383,7 +385,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             </a>
         </nav>
     </aside>
-
     <!-- Main Content -->
     <main class="main-content">
         <!-- Top Header -->
@@ -395,11 +396,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <h1 class="page-title">Edit Alat</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;"><?php echo $_SESSION['nama']; ?></span>
+                <!-- --- PERUBAHAN 8: Gunakan struktur sesi baru untuk nama user --- -->
+                <span style="margin-right: 10px;"><?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -431,7 +433,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <div class="col-md-6">
                             <div class="mb-3">
                                 <label for="nama_alat" class="form-label">Nama Alat</label>
-                                <input type="text" class="form-control" id="nama_alat" name="nama_alat" value="<?php echo $alat['nama_alat']; ?>" required>
+                                <input type="text" class="form-control" id="nama_alat" name="nama_alat" value="<?php echo htmlspecialchars($alat['nama_alat']); ?>" required>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -439,12 +441,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <label for="kategori_id" class="form-label">Kategori</label>
                                 <select class="form-select" id="kategori_id" name="kategori_id">
                                     <option value="">Pilih Kategori</option>
+                                    <!-- --- PERUBAHAN 9: Ubah loop dropdown untuk PDO --- -->
                                     <?php 
-                                    $stmt_kategori->data_seek(0);
-                                    while ($kategori = $result_kategori->fetch_assoc()): 
+                                    // Karena $stmt_kategori adalah objek PDO, kita bisa langsung fetch-nya
+                                    // Tidak perlu $result_kategori atau data_seek()
+                                    while ($kategori = $stmt_kategori->fetch()): 
                                     ?>
-                                    <option value="<?php echo $kategori['id']; ?>" <?php echo $alat['kategori_id'] == $kategori['id'] ? 'selected' : ''; ?>>
-                                        <?php echo $kategori['nama_kategori']; ?>
+                                    <option value="<?php echo $kategori['id']; ?>" <?php echo ($alat['kategori_id'] == $kategori['id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($kategori['nama_kategori']); ?>
                                     </option>
                                     <?php endwhile; ?>
                                 </select>
@@ -456,7 +460,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <div class="col-md-4">
                             <div class="mb-3">
                                 <label for="stok" class="form-label">Stok</label>
-                                <input type="number" class="form-control" id="stok" name="stok" value="<?php echo $alat['stok']; ?>" min="0" required>
+                                <input type="number" class="form-control" id="stok" name="stok" value="<?php echo htmlspecialchars($alat['stok']); ?>" min="0" required>
                             </div>
                         </div>
                         <div class="col-md-4">
@@ -464,9 +468,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <label for="kondisi" class="form-label">Kondisi</label>
                                 <select class="form-select" id="kondisi" name="kondisi" required>
                                     <option value="">Pilih Kondisi</option>
-                                    <option value="baik" <?php echo $alat['kondisi'] == 'baik' ? 'selected' : ''; ?>>Baik</option>
-                                    <option value="rusak_ringan" <?php echo $alat['kondisi'] == 'rusak_ringan' ? 'selected' : ''; ?>>Rusak Ringan</option>
-                                    <option value="rusak_berat" <?php echo $alat['kondisi'] == 'rusak_berat' ? 'selected' : ''; ?>>Rusak Berat</option>
+                                    <option value="baik" <?php echo ($alat['kondisi'] == 'baik') ? 'selected' : ''; ?>>Baik</option>
+                                    <option value="rusak_ringan" <?php echo ($alat['kondisi'] == 'rusak_ringan') ? 'selected' : ''; ?>>Rusak Ringan</option>
+                                    <option value="rusak_berat" <?php echo ($alat['kondisi'] == 'rusak_berat') ? 'selected' : ''; ?>>Rusak Berat</option>
                                 </select>
                             </div>
                         </div>
@@ -474,7 +478,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     
                     <div class="mb-3">
                         <label for="deskripsi" class="form-label">Deskripsi</label>
-                        <textarea class="form-control" id="deskripsi" name="deskripsi" rows="3"><?php echo $alat['deskripsi']; ?></textarea>
+                        <textarea class="form-control" id="deskripsi" name="deskripsi" rows="3"><?php echo htmlspecialchars($alat['deskripsi']); ?></textarea>
                     </div>
                     
                     <button type="submit" class="btn-submit">
@@ -498,18 +502,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Handle dropdown toggles
         document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(element => {
             element.addEventListener('click', function() {
-                // Toggle aria-expanded attribute
                 const isExpanded = this.getAttribute('aria-expanded') === 'true';
                 this.setAttribute('aria-expanded', !isExpanded);
                 
-                // Reinitialize Lucide icons to ensure proper rendering
                 setTimeout(() => {
                     lucide.createIcons();
                 }, 10);
             });
         });
 
-        // Reinitialize Lucide icons after DOM changes
         document.addEventListener('DOMContentLoaded', function() {
             lucide.createIcons();
         });

@@ -1,42 +1,47 @@
 <?php
 session_start();
+// --- PERUBAHAN 1: Tambahkan require untuk helpers.php ---
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERUBAHAN 2: Gunakan cara baru untuk mendapatkan koneksi PDO ---
+ $pdo = Database::getConnection();
 
-// Get kategori for dropdown
- $stmt_kategori = $conn->prepare("SELECT * FROM kategori ORDER BY nama_kategori");
- $stmt_kategori->execute();
- $result_kategori = $stmt_kategori->get_result();
+// --- PERUBAHAN 3: Ubah query kategori ke sintaks PDO ---
+// Get kategori untuk dropdown
+ $stmt_kategori = $pdo->query("SELECT * FROM kategori ORDER BY nama_kategori");
 
  $error = '';
- $success = '';
+// Variabel $success dihapus karena langsung redirect
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $nama_alat = sanitize_input($_POST['nama_alat']);
-    $kategori_id = $_POST['kategori_id'] ?: null;
+    $kategori_id = !empty($_POST['kategori_id']) ? $_POST['kategori_id'] : null;
     $stok = $_POST['stok'];
     $kondisi = $_POST['kondisi'];
     $deskripsi = sanitize_input($_POST['deskripsi']);
     
+    // --- PERUBAHAN 4: Ubah query insert ke sintaks PDO ---
     // Insert new alat
-    $stmt = $conn->prepare("INSERT INTO alat (nama_alat, kategori_id, stok, kondisi, deskripsi) VALUES (?, ?, ?, ?, ?)");
-    $stmt->bind_param("siiss", $nama_alat, $kategori_id, $stok, $kondisi, $deskripsi);
+    $stmt = $pdo->prepare("INSERT INTO alat (nama_alat, kategori_id, stok, kondisi, deskripsi) VALUES (?, ?, ?, ?, ?)");
     
-    if ($stmt->execute()) {
-        log_activity($_SESSION['user_id'], "Menambahkan alat: $nama_alat");
-        $success = "Alat berhasil ditambahkan!";
+    if ($stmt->execute([$nama_alat, $kategori_id, $stok, $kondisi, $deskripsi])) {
+        // --- PERUBAHAN 5: Ganti log_activity() dengan query PDO langsung ---
+        // Log aktivitas tambah
+        $log_stmt = $pdo->prepare("INSERT INTO log_aktivitas (user_id, aktivitas, waktu) VALUES (?, ?, NOW())");
+        $log_stmt->execute([$_SESSION['user']['id'], "Menambahkan alat: $nama_alat"]);
+        
+        // Redirect setelah berhasil
         header("Location: alat.php");
         exit();
     } else {
         $error = "Gagal menambahkan alat!";
     }
-    $stmt->close();
+    // --- PERUBAHAN 6: Tidak perlu $stmt->close() di PDO ---
 }
 ?>
 
@@ -322,7 +327,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -376,11 +381,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <h1 class="page-title">Tambah Alat</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;"><?php echo $_SESSION['nama']; ?></span>
+                <!-- --- PERUBAHAN 7: Gunakan struktur sesi baru untuk nama user --- -->
+                <span style="margin-right: 10px;"><?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -402,10 +408,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <?php if ($error): ?>
                     <div class="alert alert-danger-custom alert-custom"><?php echo $error; ?></div>
                 <?php endif; ?>
-                
-                <?php if ($success): ?>
-                    <div class="alert alert-success-custom alert-custom"><?php echo $success; ?></div>
-                <?php endif; ?>
 
                 <form method="POST" action="">
                     <div class="row">
@@ -420,8 +422,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <label for="kategori_id" class="form-label">Kategori</label>
                                 <select class="form-select" id="kategori_id" name="kategori_id">
                                     <option value="">Pilih Kategori</option>
-                                    <?php while ($kategori = $result_kategori->fetch_assoc()): ?>
-                                    <option value="<?php echo $kategori['id']; ?>"><?php echo $kategori['nama_kategori']; ?></option>
+                                    <!-- --- PERUBAHAN 8: Ubah loop dropdown untuk PDO --- -->
+                                    <?php while ($kategori = $stmt_kategori->fetch()): ?>
+                                    <option value="<?php echo $kategori['id']; ?>"><?php echo htmlspecialchars($kategori['nama_kategori']); ?></option>
                                     <?php endwhile; ?>
                                 </select>
                             </div>
@@ -474,18 +477,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Handle dropdown toggles
         document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(element => {
             element.addEventListener('click', function() {
-                // Toggle aria-expanded attribute
                 const isExpanded = this.getAttribute('aria-expanded') === 'true';
                 this.setAttribute('aria-expanded', !isExpanded);
                 
-                // Reinitialize Lucide icons to ensure proper rendering
                 setTimeout(() => {
                     lucide.createIcons();
                 }, 10);
             });
         });
 
-        // Reinitialize Lucide icons after DOM changes
         document.addEventListener('DOMContentLoaded', function() {
             lucide.createIcons();
         });

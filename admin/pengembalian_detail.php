@@ -1,29 +1,52 @@
 <?php
 session_start();
+// PERBAIKAN 1: Tambahkan helpers untuk memuat fungsi check_login, check_role, dan format_tanggal
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+$conn = Database::getConnection();
+
 
 // Get pengembalian detail
 if (isset($_GET['id'])) {
     $id = $_GET['id'];
-    $stmt = $conn->prepare("SELECT pr.*, p.tanggal_pinjam, p.user_id, p.alat_id, p.jumlah, u.nama as nama_user, u.username, a.nama_alat FROM pengembalian pr JOIN peminjaman p ON pr.peminjaman_id = p.id JOIN users u ON p.user_id = u.id JOIN alat a ON p.alat_id = a.id WHERE pr.id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $pengembalian = $result->fetch_assoc();
-    $stmt->close();
     
-    if (!$pengembalian) {
+    // PERBAIKAN 2: Ubah query dan eksekusi untuk menggunakan sintaks PDO
+    try {
+        $stmt = $conn->prepare("SELECT pr.*, p.tanggal_pinjam, p.user_id, p.alat_id, p.jumlah, u.nama as nama_user, u.username, a.nama_alat 
+                                FROM pengembalian pr 
+                                JOIN peminjaman p ON pr.peminjaman_id = p.id 
+                                JOIN users u ON p.user_id = u.id 
+                                JOIN alat a ON p.alat_id = a.id 
+                                WHERE pr.id = :id");
+        
+        // Hapus $stmt->bind_param("i", $id); (ini sintaks MySQLi)
+        // Eksekusi dengan melewatkan parameter dalam array
+        $stmt->execute(['id' => $id]);
+        
+        // Hapus $result = $stmt->get_result(); (ini fungsi MySQLi)
+        // Ambil hasil langsung dari statement
+        $pengembalian = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Hapus $stmt->close(); (tidak diperlukan di PDO)
+        
+        if (!$pengembalian) {
+            $_SESSION['error'] = "Data pengembalian tidak ditemukan.";
+            header("Location: pengembalian.php");
+            exit();
+        }
+    } catch (PDOException $e) {
+        // Tangani error database
+        $_SESSION['error'] = "Terjadi kesalahan saat mengambil data: " . $e->getMessage();
         header("Location: pengembalian.php");
         exit();
     }
 } else {
+    $_SESSION['error'] = "ID pengembalian tidak disediakan.";
     header("Location: pengembalian.php");
     exit();
 }
@@ -355,7 +378,7 @@ if (isset($_GET['id'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -381,13 +404,13 @@ if (isset($_GET['id'])) {
             </div>
 
             <!-- Transaksi Dropdown -->
-            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#transaksiDropdown" aria-expanded="false">
+            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#transaksiDropdown" aria-expanded="true">
                 <i data-lucide="arrow-right-left" class="menu-icon"></i>
                 <span class="menu-text">Transaksi</span>
                 <i data-lucide="chevron-down" class="menu-arrow"></i>
             </div>
-            <div class="collapse dropdown-menu-custom" id="transaksiDropdown">
-                <a href="peminjaman.php" class="menu-item">
+            <div class="collapse show dropdown-menu-custom" id="transaksiDropdown">
+                <a href="peminjaman.php" class="menu-item ">
                     <span class="menu-text">Data Peminjaman</span>
                 </a>
                 <a href="pengembalian.php" class="menu-item active">
@@ -412,11 +435,12 @@ if (isset($_GET['id'])) {
                 <h1 class="page-title">Detail Pengembalian</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN 3: Sesuaikan akses session dengan struktur yang konsisten -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -425,6 +449,14 @@ if (isset($_GET['id'])) {
                 </div>
             </div>
         </div>
+
+        <!-- Notifikasi -->
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
 
         <!-- Detail Content -->
         <div class="row">
@@ -436,33 +468,34 @@ if (isset($_GET['id'])) {
                     <div class="card-body">
                         <div class="detail-row">
                             <div class="detail-label">ID Pengembalian:</div>
-                            <div class="detail-value">#<?php echo str_pad($pengembalian['id'], 6, '0', STR_PAD_LEFT); ?></div>
+                            <!-- PERBAIKAN 4: Sanitasi semua output yang berasal dari database -->
+                            <div class="detail-value">#<?php echo htmlspecialchars(str_pad($pengembalian['id'], 6, '0', STR_PAD_LEFT)); ?></div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Peminjam:</div>
-                            <div class="detail-value"><?php echo $pengembalian['nama_user']; ?> (<?php echo $pengembalian['username']; ?>)</div>
+                            <div class="detail-value"><?php echo htmlspecialchars($pengembalian['nama_user']); ?> (<?php echo htmlspecialchars($pengembalian['username']); ?>)</div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Alat:</div>
-                            <div class="detail-value"><?php echo $pengembalian['nama_alat']; ?></div>
+                            <div class="detail-value"><?php echo htmlspecialchars($pengembalian['nama_alat']); ?></div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Tanggal Pinjam:</div>
-                            <div class="detail-value"><?php echo format_tanggal($pengembalian['tanggal_pinjam']); ?></div>
+                            <div class="detail-value"><?php echo htmlspecialchars(format_tanggal($pengembalian['tanggal_pinjam'])); ?></div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Tanggal Kembali:</div>
-                            <div class="detail-value"><?php echo format_tanggal($pengembalian['tanggal_kembali']); ?></div>
+                            <div class="detail-value"><?php echo htmlspecialchars(format_tanggal($pengembalian['tanggal_kembali'])); ?></div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Jumlah:</div>
-                            <div class="detail-value"><?php echo $pengembalian['jumlah']; ?></div>
+                            <div class="detail-value"><?php echo htmlspecialchars($pengembalian['jumlah']); ?></div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Kondisi Kembali:</div>
                             <div class="detail-value">
                                 <span class="badge-custom badge-<?php echo $pengembalian['kondisi_kembali'] == 'baik' ? 'success' : ($pengembalian['kondisi_kembali'] == 'rusak_ringan' ? 'warning' : 'danger'); ?>">
-                                    <?php echo ucfirst($pengembalian['kondisi_kembali']); ?>
+                                    <?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $pengembalian['kondisi_kembali']))); ?>
                                 </span>
                             </div>
                         </div>
@@ -473,7 +506,7 @@ if (isset($_GET['id'])) {
                         <?php if ($pengembalian['keterangan']): ?>
                         <div class="detail-row">
                             <div class="detail-label">Keterangan:</div>
-                            <div class="detail-value"><?php echo $pengembalian['keterangan']; ?></div>
+                            <div class="detail-value"><?php echo htmlspecialchars($pengembalian['keterangan']); ?></div>
                         </div>
                         <?php endif; ?>
                         <div class="detail-row">

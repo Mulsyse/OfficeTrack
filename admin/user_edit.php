@@ -1,73 +1,95 @@
 <?php
 session_start();
+// PERBAIKAN 1: Tambahkan helpers.php
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('admin');
+$conn = Database::getConnection();
 
- $db = new Database();
- $conn = $db->getConnection();
 
+// PERBAIKAN 2: Inisialisasi variabel notifikasi dan data lama
  $error = '';
- $success = '';
+ $old_data = [];
 
 // Get user data
 if (isset($_GET['id'])) {
     $id = $_GET['id'];
-    $stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $user = $result->fetch_assoc();
-    $stmt->close();
-    
-    if (!$user) {
-        header("Location: users.php");
-        exit();
+    try {
+        $stmt = $conn->prepare("SELECT * FROM users WHERE id = ?");
+        $stmt->execute([$id]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$user) {
+            // Jika user tidak ditemukan, redirect
+            header("Location: users.php");
+            exit();
+        }
+    } catch (PDOException $e) {
+        // Jika terjadi error database, tampilkan pesan error atau redirect
+        die("Error mengambil data user: " . $e->getMessage());
     }
 } else {
     header("Location: users.php");
     exit();
 }
 
+// PERBAIKAN 3: Gunakan pola PRG (Post/Redirect/Get)
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // Ambil data dari form
+    $old_data = $_POST; // Simpan data POST untuk diisi kembali jika ada error
     $nama = sanitize_input($_POST['nama']);
     $username = sanitize_input($_POST['username']);
     $role = $_POST['role'];
     $password = $_POST['password'];
     
-    // Check if username already exists (excluding current user)
-    $stmt = $conn->prepare("SELECT id FROM users WHERE username = ? AND id != ?");
-    $stmt->bind_param("si", $username, $id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
-        $error = "Username sudah digunakan!";
-    } else {
-        // Update user
-        if (!empty($password)) {
-            // Update with new password
-            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("UPDATE users SET nama = ?, username = ?, password = ?, role = ? WHERE id = ?");
-            $stmt->bind_param("ssssi", $nama, $username, $hashed_password, $role, $id);
-        } else {
-            // Update without changing password
-            $stmt = $conn->prepare("UPDATE users SET nama = ?, username = ?, role = ? WHERE id = ?");
-            $stmt->bind_param("sssi", $nama, $username, $role, $id);
-        }
+    try {
+        // Check if username already exists (excluding current user)
+        $stmt = $conn->prepare("SELECT id FROM users WHERE username = ? AND id != ?");
+        $stmt->execute([$username, $id]);
         
-        if ($stmt->execute()) {
-            log_activity($_SESSION['user_id'], "Mengedit user: $nama");
-            $success = "User berhasil diperbarui!";
-            header("Location: users.php");
+        if ($stmt->rowCount() > 0) {
+            // PERBAIKAN 4: Simpan error di session dan redirect
+            $_SESSION['error'] = "Username sudah digunakan oleh user lain!";
+            $_SESSION['old'] = $old_data;
+            header("Location: user_edit.php?id=" . $id);
             exit();
         } else {
-            $error = "Gagal memperbarui user!";
+            // Update user
+            if (!empty($password)) {
+                // Update with new password
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("UPDATE users SET nama = ?, username = ?, password = ?, role = ? WHERE id = ?");
+                $stmt->execute([$nama, $username, $hashed_password, $role, $id]);
+            } else {
+                // Update without changing password
+                $stmt = $conn->prepare("UPDATE users SET nama = ?, username = ?, role = ? WHERE id = ?");
+                $stmt->execute([$nama, $username, $role, $id]);
+            }
+            
+            // PERBAIKAN 5: Log aktivitas dan redirect dengan pesan sukses
+            log_activity($_SESSION['user']['id'], "Mengedit data user ID: $id (Nama: $nama)");
+            $_SESSION['success'] = "User berhasil diperbarui!";
+            header("Location: users.php");
+            exit();
         }
+    } catch (PDOException $e) {
+        // Tangani error database
+        $_SESSION['error'] = "Gagal memperbarui user: " . $e->getMessage();
+        $_SESSION['old'] = $old_data;
+        header("Location: user_edit.php?id=" . $id);
+        exit();
     }
-    $stmt->close();
+}
+
+// Tampilkan notifikasi dari session jika ada
+if (isset($_SESSION['error'])) {
+    $error = $_SESSION['error'];
+    $old_data = $_SESSION['old'] ?? [];
+    unset($_SESSION['error']);
+    unset($_SESSION['old']);
 }
 ?>
 
@@ -274,6 +296,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             border: none;
             display: inline-flex;
             align-items: center;
+            text-decoration: none;
         }
 
         .btn-primary-custom {
@@ -285,6 +308,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             background-color: var(--secondary-color);
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(67, 97, 238, 0.3);
+            color: white;
         }
 
         .btn-secondary-custom {
@@ -296,26 +320,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             background-color: #5a6268;
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(108, 117, 125, 0.3);
-        }
-
-        /* Alerts */
-        .alert-custom {
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border: none;
-            display: flex;
-            align-items: center;
-        }
-
-        .alert-danger-custom {
-            background-color: rgba(251, 86, 7, 0.1);
-            color: var(--danger-color);
-        }
-
-        .alert-success-custom {
-            background-color: rgba(6, 255, 165, 0.1);
-            color: var(--success-color);
+            color: white;
         }
 
         /* Mobile Responsiveness */
@@ -364,7 +369,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -372,11 +377,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <span class="menu-text">Dashboard</span>
             </a>
             <!-- Master Data Dropdown -->
-            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#masterDataDropdown" aria-expanded="false">
+            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#masterDataDropdown" aria-expanded="true">
                 <i data-lucide="database" class="menu-icon"></i>
                 <span class="menu-text">Master Data</span>
                 <i data-lucide="chevron-down" class="menu-arrow"></i>
             </div>
+            <!-- PERBAIKAN 6: Tambahkan kelas 'show' agar dropdown terbuka -->
             <div class="collapse dropdown-menu-custom show" id="masterDataDropdown">
                 <a href="users.php" class="menu-item active">
                     <span class="menu-text">Data User</span>
@@ -421,11 +427,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <h1 class="page-title">Edit User</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN 7: Sesuaikan akses session -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -440,21 +447,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <div class="card-header-custom">
                 <h5>Form Edit User</h5>
                 <span class="text-muted" style="font-size: 0.9rem;">
-                    ID User: #<?php echo $user['id']; ?>
+                    <!-- PERBAIKAN 8: Escape output -->
+                    ID User: #<?php echo htmlspecialchars($user['id']); ?>
                 </span>
             </div>
             <div class="card-body-custom">
+                <!-- PERBAIKAN 9: Tampilkan notifikasi dari session -->
                 <?php if ($error): ?>
-                    <div class="alert-custom alert-danger-custom">
-                        <i data-lucide="alert-circle" style="margin-right: 10px;"></i>
-                        <?php echo $error; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <?php if ($success): ?>
-                    <div class="alert-custom alert-success-custom">
-                        <i data-lucide="check-circle" style="margin-right: 10px;"></i>
-                        <?php echo $success; ?>
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <?php echo htmlspecialchars($error); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 <?php endif; ?>
 
@@ -465,14 +467,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <i data-lucide="user" style="width: 16px; height: 16px; margin-right: 5px;"></i>
                                 Nama Lengkap
                             </label>
-                            <input type="text" class="form-control" id="nama" name="nama" value="<?php echo $user['nama']; ?>" required>
+                            <!-- PERBAIKAN 10: Isi nilai dari data POST (jika ada error) atau dari database -->
+                            <input type="text" class="form-control" id="nama" name="nama" value="<?php echo htmlspecialchars($old_data['nama'] ?? $user['nama']); ?>" required>
                         </div>
                         <div class="col-md-6 mb-3">
                             <label for="username" class="form-label">
                                 <i data-lucide="at-sign" style="width: 16px; height: 16px; margin-right: 5px;"></i>
                                 Username
                             </label>
-                            <input type="text" class="form-control" id="username" name="username" value="<?php echo $user['username']; ?>" required>
+                            <input type="text" class="form-control" id="username" name="username" value="<?php echo htmlspecialchars($old_data['username'] ?? $user['username']); ?>" required>
                         </div>
                     </div>
                     
@@ -482,6 +485,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <i data-lucide="lock" style="width: 16px; height: 16px; margin-right: 5px;"></i>
                                 Password
                             </label>
+                            <!-- Password selalu kosong saat form dimuat ulang -->
                             <input type="password" class="form-control" id="password" name="password">
                             <div class="form-text">Biarkan kosong jika tidak ingin mengubah password</div>
                         </div>
@@ -492,9 +496,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             </label>
                             <select class="form-select" id="role" name="role" required>
                                 <option value="">Pilih Role</option>
-                                <option value="admin" <?php echo $user['role'] == 'admin' ? 'selected' : ''; ?>>Admin</option>
-                                <option value="petugas" <?php echo $user['role'] == 'petugas' ? 'selected' : ''; ?>>Petugas</option>
-                                <option value="peminjam" <?php echo $user['role'] == 'peminjam' ? 'selected' : ''; ?>>Peminjam</option>
+                                <option value="admin" <?php echo (($old_data['role'] ?? $user['role']) == 'admin') ? 'selected' : ''; ?>>Admin</option>
+                                <option value="petugas" <?php echo (($old_data['role'] ?? $user['role']) == 'petugas') ? 'selected' : ''; ?>>Petugas</option>
+                                <option value="peminjam" <?php echo (($old_data['role'] ?? $user['role']) == 'peminjam') ? 'selected' : ''; ?>>Peminjam</option>
                             </select>
                         </div>
                     </div>
@@ -525,7 +529,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         });
         
         // Handle dropdown arrows rotation
-        document.querySelectorAll('.dropdown-toggle').forEach(item => {
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(item => {
             item.addEventListener('click', function() {
                 const expanded = this.getAttribute('aria-expanded') === 'true';
                 this.setAttribute('aria-expanded', !expanded);

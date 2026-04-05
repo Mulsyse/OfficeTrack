@@ -1,45 +1,60 @@
 <?php
+// Memulai sesi
 session_start();
-require_once '../config/database.php';
 
-// Check login and role
+// Include file helpers yang berisi fungsi-fungsi penting
+require_once '../config/helpers.php';
+
+// Cek apakah user sudah login dan memiliki role admin
 check_login();
 check_role('admin');
 
-// Get statistics
- $db = new Database();
- $conn = $db->getConnection();
+// Inisialisasi variabel untuk statistik
+ $total_users = 0;
+ $total_alat = 0;
+ $total_peminjaman = 0;
+ $total_pending = 0;
+ $activities = [];
+ $error_message = '';
 
-// Total users
- $stmt_users = $conn->prepare("SELECT COUNT(*) as total FROM users");
- $stmt_users->execute();
- $result_users = $stmt_users->get_result();
- $total_users = $result_users->fetch_assoc()['total'];
+try {
+    // Dapatkan koneksi database menggunakan PDO
+    $pdo = Database::getConnection();
 
-// Total alat
- $stmt_alat = $conn->prepare("SELECT COUNT(*) as total FROM alat");
- $stmt_alat->execute();
- $result_alat = $stmt_alat->get_result();
- $total_alat = $result_alat->fetch_assoc()['total'];
+    // Total users (menggunakan fetchColumn untuk efisiensi)
+    $stmt_users = $pdo->query("SELECT COUNT(*) FROM users");
+    $total_users = $stmt_users->fetchColumn();
 
-// Total peminjaman
- $stmt_peminjaman = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman");
- $stmt_peminjaman->execute();
- $result_peminjaman = $stmt_peminjaman->get_result();
- $total_peminjaman = $result_peminjaman->fetch_assoc()['total'];
+    // Total alat
+    $stmt_alat = $pdo->query("SELECT COUNT(*) FROM alat");
+    $total_alat = $stmt_alat->fetchColumn();
 
-// Peminjaman pending
- $stmt_pending = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'pending'");
- $stmt_pending->execute();
- $result_pending = $stmt_pending->get_result();
- $total_pending = $result_pending->fetch_assoc()['total'];
+    // Total peminjaman
+    $stmt_peminjaman = $pdo->query("SELECT COUNT(*) FROM peminjaman");
+    $total_peminjaman = $stmt_peminjaman->fetchColumn();
 
-// Recent activities
- $stmt_activities = $conn->prepare("SELECT la.*, u.nama FROM log_aktivitas la JOIN users u ON la.user_id = u.id ORDER BY la.waktu DESC LIMIT 10");
- $stmt_activities->execute();
- $result_activities = $stmt_activities->get_result();
+    // Peminjaman pending
+    $stmt_pending = $pdo->query("SELECT COUNT(*) FROM peminjaman WHERE status = 'pending'");
+    $total_pending = $stmt_pending->fetchColumn();
+
+    // Recent activities
+    $stmt_activities = $pdo->query("
+        SELECT la.*, u.nama 
+        FROM log_aktivitas la 
+        JOIN users u ON la.user_id = u.id 
+        ORDER BY la.waktu DESC 
+        LIMIT 10
+    ");
+    // Ambil semua hasil ke dalam array
+    $activities = $stmt_activities->fetchAll(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
+    // Jika terjadi error pada database, tampilkan pesan error (untuk development)
+    // Untuk produksi, sebaiknya log error dan tampilkan pesan yang lebih ramah
+    $error_message = "Terjadi kesalahan pada database. Silakan coba lagi nanti.";
+    // error_log($e->getMessage()); // Untuk mencatat error ke log server
+}
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -49,6 +64,7 @@ check_role('admin');
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <!-- Saya mempertahankan semua CSS Anda di sini -->
     <style>
         :root {
             --primary-color: #4361ee;
@@ -392,7 +408,7 @@ check_role('admin');
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item active">
@@ -449,11 +465,13 @@ check_role('admin');
                 <h1 class="page-title">Dashboard Admin</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN: Menggunakan $_SESSION['user']['nama'] -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        <!-- PERBAIKAN: Menggunakan $_SESSION['user']['nama'] -->
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -462,6 +480,11 @@ check_role('admin');
                 </div>
             </div>
         </div>
+
+        <!-- Tampilkan pesan error jika ada -->
+        <?php if ($error_message): ?>
+            <div class="alert alert-danger"><?php echo $error_message; ?></div>
+        <?php endif; ?>
 
         <!-- Statistics Cards -->
         <div class="row">
@@ -536,13 +559,20 @@ check_role('admin');
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php while ($activity = $result_activities->fetch_assoc()): ?>
-                                <tr>
-                                    <td><?php echo date('d/m/Y H:i', strtotime($activity['waktu'])); ?></td>
-                                    <td><?php echo $activity['nama']; ?></td>
-                                    <td><?php echo $activity['aktivitas']; ?></td>
-                                </tr>
-                                <?php endwhile; ?>
+                                <!-- PERBAIKAN: Menggunakan foreach untuk array hasil PDO -->
+                                <?php if (!empty($activities)): ?>
+                                    <?php foreach ($activities as $activity): ?>
+                                    <tr>
+                                        <td><?php echo date('d/m/Y H:i', strtotime($activity['waktu'])); ?></td>
+                                        <td><?php echo htmlspecialchars($activity['nama']); ?></td>
+                                        <td><?php echo htmlspecialchars($activity['aktivitas']); ?></td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="3" class="text-center">Tidak ada aktivitas terbaru.</td>
+                                    </tr>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>

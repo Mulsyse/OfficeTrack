@@ -1,45 +1,64 @@
 <?php
+// PERBAIKAN 1: Memulai session dan memuat file yang diperlukan
 session_start();
-require_once '../config/database.php';
 
-// Check login and role
+require_once '../config/database.php';
+require_once '../config/helpers.php'; // Tambahkan helpers untuk fungsi format_tanggal
+
+// PERBAIKAN 2: Cek login dan role peminjam
 check_login();
 check_role('peminjam');
 
- $db = new Database();
- $conn = $db->getConnection();
- $user_id = $_SESSION['user_id'];
+// PERBAIKAN 3: Inisialisasi variabel dan ambil data user dari session
+$conn = Database::getConnection();
+// Gunakan struktur session yang konsisten
+ $user_id = $_SESSION['user']['id'];
+ $user_nama = $_SESSION['user']['nama'];
 
-// Get user's peminjaman statistics
- $stmt_total = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE user_id = ?");
- $stmt_total->bind_param("i", $user_id);
- $stmt_total->execute();
- $result_total = $stmt_total->get_result();
- $total_peminjaman = $result_total->fetch_assoc()['total'];
+// PERBAIKAN 4: Pindahkan logika PHP (query database) ke atas, sebelum HTML
+// Ini memisahkan logika bisnis dari tampilan
+ $stats = [];
+ $recent_peminjaman = [];
+ $error_message = null;
 
- $stmt_pending = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE user_id = ? AND status = 'pending'");
- $stmt_pending->bind_param("i", $user_id);
- $stmt_pending->execute();
- $result_pending = $stmt_pending->get_result();
- $total_pending = $result_pending->fetch_assoc()['total'];
+try {
+    // Get user's peminjaman statistics
+    // Untuk query yang mengembalikan satu nilai (seperti COUNT), gunakan fetchColumn()
+    $stmt_total = $conn->prepare("SELECT COUNT(*) FROM peminjaman WHERE user_id = ?");
+    $stmt_total->execute([$user_id]); // Di PDO, parameter bisa dilewatkan sebagai array di execute()
+    $stats['total_peminjaman'] = $stmt_total->fetchColumn();
 
- $stmt_disetujui = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE user_id = ? AND status IN ('disetujui', 'dipinjam')");
- $stmt_disetujui->bind_param("i", $user_id);
- $stmt_disetujui->execute();
- $result_disetujui = $stmt_disetujui->get_result();
- $total_disetujui = $result_disetujui->fetch_assoc()['total'];
+    $stmt_pending = $conn->prepare("SELECT COUNT(*) FROM peminjaman WHERE user_id = ? AND status = 'pending'");
+    $stmt_pending->execute([$user_id]);
+    $stats['total_pending'] = $stmt_pending->fetchColumn();
 
- $stmt_dikembalikan = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE user_id = ? AND status = 'dikembalikan'");
- $stmt_dikembalikan->bind_param("i", $user_id);
- $stmt_dikembalikan->execute();
- $result_dikembalikan = $stmt_dikembalikan->get_result();
- $total_dikembalikan = $result_dikembalikan->fetch_assoc()['total'];
+    $stmt_disetujui = $conn->prepare("SELECT COUNT(*) FROM peminjaman WHERE user_id = ? AND status IN ('disetujui', 'dipinjam')");
+    $stmt_disetujui->execute([$user_id]);
+    $stats['total_disetujui'] = $stmt_disetujui->fetchColumn();
 
-// Get recent peminjaman
- $stmt_recent = $conn->prepare("SELECT p.*, a.nama_alat FROM peminjaman p JOIN alat a ON p.alat_id = a.id WHERE p.user_id = ? ORDER BY p.created_at DESC LIMIT 5");
- $stmt_recent->bind_param("i", $user_id);
- $stmt_recent->execute();
- $result_recent = $stmt_recent->get_result();
+    $stmt_dikembalikan = $conn->prepare("SELECT COUNT(*) FROM peminjaman WHERE user_id = ? AND status = 'dikembalikan'");
+    $stmt_dikembalikan->execute([$user_id]);
+    $stats['total_dikembalikan'] = $stmt_dikembalikan->fetchColumn();
+
+    // Get recent peminjaman
+    // Untuk query yang mengembalikan banyak baris, gunakan fetchAll()
+    $stmt_recent = $conn->prepare("SELECT p.*, a.nama_alat FROM peminjaman p JOIN alat a ON p.alat_id = a.id WHERE p.user_id = ? ORDER BY p.created_at DESC LIMIT 5");
+    $stmt_recent->execute([$user_id]);
+    $recent_peminjaman = $stmt_recent->fetchAll(); // fetchAll() mengambil semua baris sekaligus ke dalam array
+
+} catch (PDOException $e) { // PERBAIKAN: Tangkap PDOException, bukan mysqli_sql_exception
+    // Tangani error database dengan baik
+    error_log("Dashboard Peminjam Error: " . $e->getMessage());
+    $error_message = "Terjadi kesalahan saat memuat data. Silakan coba lagi nanti.";
+    // Set nilai default agar tidak error di tampilan
+    $stats = [
+        'total_peminjaman' => 0,
+        'total_pending' => 0,
+        'total_disetujui' => 0,
+        'total_dikembalikan' => 0
+    ];
+    $recent_peminjaman = [];
+}
 ?>
 
 <!DOCTYPE html>
@@ -71,9 +90,9 @@ check_role('peminjam');
             background-color: #f5f7fb;
             color: #333;
         }
-    body::-webkit-scrollbar {
-    display: none; /* Menyembunyikan scrollbar untuk Chrome, Safari, Opera */
-}
+        body::-webkit-scrollbar {
+            display: none; /* Menyembunyikan scrollbar untuk Chrome, Safari, Opera */
+        }
         /* Sidebar */
         .sidebar {
             position: fixed;
@@ -504,7 +523,7 @@ check_role('peminjam');
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item active">
@@ -541,11 +560,13 @@ check_role('peminjam');
                 <h1 class="page-title">Dashboard Peminjam</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN 6: Escape output dan gunakan session yang konsisten -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($user_nama); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <!-- PERBAIKAN 7: Escape output -->
+                            <?php echo htmlspecialchars(strtoupper(substr($user_nama, 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -554,6 +575,14 @@ check_role('peminjam');
                 </div>
             </div>
         </div>
+
+        <!-- PERBAIKAN 8: Tampilkan notifikasi error jika ada -->
+        <?php if ($error_message): ?>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($error_message); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
 
         <!-- Statistics Cards -->
         <div class="stats-grid">
@@ -564,7 +593,8 @@ check_role('peminjam');
                         <i data-lucide="handshake"></i>
                     </div>
                 </div>
-                <h3 class="stat-value"><?php echo $total_peminjaman; ?></h3>
+                <!-- PERBAIKAN 9: Gunakan data dari array $stats -->
+                <h3 class="stat-value"><?php echo htmlspecialchars($stats['total_peminjaman']); ?></h3>
                 <p class="stat-change">Semua peminjaman Anda</p>
             </div>
 
@@ -575,7 +605,7 @@ check_role('peminjam');
                         <i data-lucide="clock"></i>
                     </div>
                 </div>
-                <h3 class="stat-value"><?php echo $total_pending; ?></h3>
+                <h3 class="stat-value"><?php echo htmlspecialchars($stats['total_pending']); ?></h3>
                 <p class="stat-change">Peminjaman pending</p>
             </div>
 
@@ -586,7 +616,7 @@ check_role('peminjam');
                         <i data-lucide="check-circle"></i>
                     </div>
                 </div>
-                <h3 class="stat-value"><?php echo $total_disetujui; ?></h3>
+                <h3 class="stat-value"><?php echo htmlspecialchars($stats['total_disetujui']); ?></h3>
                 <p class="stat-change">Sedang dipinjam</p>
             </div>
 
@@ -597,7 +627,7 @@ check_role('peminjam');
                         <i data-lucide="rotate-ccw"></i>
                     </div>
                 </div>
-                <h3 class="stat-value"><?php echo $total_dikembalikan; ?></h3>
+                <h3 class="stat-value"><?php echo htmlspecialchars($stats['total_dikembalikan']); ?></h3>
                 <p class="stat-change">Selesai dikembalikan</p>
             </div>
         </div>
@@ -640,7 +670,7 @@ check_role('peminjam');
                 </a>
             </div>
             <div class="card-body">
-                <?php if ($result_recent->num_rows > 0): ?>
+                <?php if (!empty($recent_peminjaman)): ?>
                     <div class="table-responsive">
                         <table class="table-custom">
                             <thead>
@@ -653,11 +683,12 @@ check_role('peminjam');
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php while ($peminjaman = $result_recent->fetch_assoc()): ?>
+                                <?php foreach ($recent_peminjaman as $peminjaman): ?>
                                 <tr>
-                                    <td><?php echo $peminjaman['nama_alat']; ?></td>
-                                    <td><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></td>
-                                    <td><?php echo $peminjaman['jumlah']; ?></td>
+                                    <!-- PERBAIKAN 10: Escape semua output dari database -->
+                                    <td><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></td>
+                                    <td><?php echo htmlspecialchars(format_tanggal($peminjaman['tanggal_pinjam'])); ?></td>
+                                    <td><?php echo htmlspecialchars($peminjaman['jumlah']); ?></td>
                                     <td>
                                         <span class="badge-custom badge-<?php 
                                             echo $peminjaman['status'] == 'disetujui' ? 'success' : 
@@ -665,17 +696,19 @@ check_role('peminjam');
                                                 ($peminjaman['status'] == 'dipinjam' ? 'primary' : 
                                                 ($peminjaman['status'] == 'dikembalikan' ? 'info' : 'warning'))); 
                                         ?>">
-                                            <?php echo ucfirst($peminjaman['status']); ?>
+                                            <!-- PERBAIKAN 11: Escape output status -->
+                                            <?php echo htmlspecialchars(ucfirst($peminjaman['status'])); ?>
                                         </span>
                                     </td>
                                     <td>
-                                        <a href="peminjaman_detail.php?id=<?php echo $peminjaman['id']; ?>" class="btn-custom btn-primary-custom" style="padding: 6px 12px; font-size: 0.85rem;">
+                                        <!-- PERBAIKAN 12: Escape output ID -->
+                                        <a href="peminjaman_detail.php?id=<?php echo htmlspecialchars($peminjaman['id']); ?>" class="btn-custom btn-primary-custom" style="padding: 6px 12px; font-size: 0.85rem;">
                                             <i data-lucide="eye" style="width: 14px; height: 14px;"></i>
                                             Detail
                                         </a>
                                     </td>
                                 </tr>
-                                <?php endwhile; ?>
+                                <?php endforeach; ?>
                             </tbody>
                         </table>
                     </div>

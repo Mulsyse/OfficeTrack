@@ -1,6 +1,8 @@
 <?php
 session_start();
 require_once '../config/database.php';
+// Tambahkan require_once untuk memuat fungsi helper
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
@@ -24,70 +26,74 @@ check_role('admin');
 
 
 // Get peminjaman data
-if (!isset($_GET['id'])) {
+if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
+    $_SESSION['error'] = "ID Peminjaman tidak valid.";
     header('Location: peminjaman.php');
     exit();
 }
 
  $id = $_GET['id'];
- $db = new Database();
- $conn = $db->getConnection();
 
-// Get peminjaman details (menggunakan variabel konfigurasi kolom)
+// PERBAIKAN: Panggil metode statis getConnection() langsung dari kelas Database
+ $conn = Database::getConnection();
+
+// Get peminjaman details (menggunakan variabel konfigurasi kolom dan sintaks PDO)
  $stmt = $conn->prepare("
     SELECT p.*, u.{$db_users_nama_kolom} as nama_user, u.username, a.{$db_alat_nama_kolom} as nama_alat, a.{$db_alat_kondisi_kolom} as kondisi_alat
     FROM peminjaman p
     JOIN users u ON p.{$db_peminjaman_user_id_kolom} = u.id
     JOIN alat a ON p.{$db_peminjaman_alat_id_kolom} = a.id
-    WHERE p.id = ?
+    WHERE p.id = :id
 ");
- $stmt->bind_param("i", $id);
+// Gunakan bindParam PDO dengan named placeholder
+ $stmt->bindParam(':id', $id, PDO::PARAM_INT);
  $stmt->execute();
- $result = $stmt->get_result();
 
-if ($result->num_rows === 0) {
+// Gunakan fetch PDO untuk mendapatkan satu baris data
+ $peminjaman = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$peminjaman) {
+    $_SESSION['error'] = "Data peminjaman tidak ditemukan.";
     header('Location: peminjaman.php');
     exit();
 }
 
- $peminjaman = $result->fetch_assoc();
-
-// Get statistics
+// Get statistics (menggunakan sintaks PDO yang benar dan efisien)
  $stmt_total = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman");
  $stmt_total->execute();
- $total_peminjaman = $stmt_total->get_result()->fetch_assoc()['total'];
+ $total_peminjaman = $stmt_total->fetchColumn();
 
  $stmt_menunggu = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'menunggu'");
  $stmt_menunggu->execute();
- $total_menunggu = $stmt_menunggu->get_result()->fetch_assoc()['total'];
+ $total_menunggu = $stmt_menunggu->fetchColumn();
 
  $stmt_disetujui = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'disetujui'");
  $stmt_disetujui->execute();
- $total_disetujui = $stmt_disetujui->get_result()->fetch_assoc()['total'];
+ $total_disetujui = $stmt_disetujui->fetchColumn();
 
  $stmt_dipinjam = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'dipinjam'");
  $stmt_dipinjam->execute();
- $total_dipinjam = $stmt_dipinjam->get_result()->fetch_assoc()['total'];
+ $total_dipinjam = $stmt_dipinjam->fetchColumn();
 
  $stmt_dikembalikan = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'dikembalikan'");
  $stmt_dikembalikan->execute();
- $total_dikembalikan = $stmt_dikembalikan->get_result()->fetch_assoc()['total'];
+ $total_dikembalikan = $stmt_dikembalikan->fetchColumn();
 
  $stmt_ditolak = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'ditolak'");
  $stmt_ditolak->execute();
- $total_ditolak = $stmt_ditolak->get_result()->fetch_assoc()['total'];
+ $total_ditolak = $stmt_ditolak->fetchColumn();
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detail Peminjaman - Sistem Peminjaman Alat</title>
+    <title>Detail Peminjaman Alat</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
+        /* ... (Style CSS tidak berubah, jadi saya singkirkan untuk fokus pada PHP) ... */
         :root {
             --primary-color: #4361ee;
             --secondary-color: #3f37c9;
@@ -531,7 +537,7 @@ if ($result->num_rows === 0) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -588,11 +594,11 @@ if ($result->num_rows === 0) {
                 <h1 class="page-title">Detail Peminjaman</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -601,7 +607,20 @@ if ($result->num_rows === 0) {
                 </div>
             </div>
         </div>
-    
+        
+        <!-- Notifikasi -->
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_SESSION['success'])): ?>
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($_SESSION['success']); unset($_SESSION['success']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
 
         <!-- Detail Information -->
         <div class="row">
@@ -616,21 +635,21 @@ if ($result->num_rows === 0) {
                             <div class="col-md-6">
                                 <div class="detail-item">
                                     <div class="detail-label">ID Peminjaman:</div>
-                                    <div class="detail-value">#<?php echo str_pad($peminjaman['id'], 6, '0', STR_PAD_LEFT); ?></div>
+                                    <div class="detail-value">#<?php echo htmlspecialchars(str_pad($peminjaman['id'], 6, '0', STR_PAD_LEFT)); ?></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Peminjam:</div>
-                                    <div class="detail-value"><?php echo $peminjaman['nama_user']; ?> (@<?php echo $peminjaman['username']; ?>)</div>
+                                    <div class="detail-value"><?php echo htmlspecialchars($peminjaman['nama_user']); ?> (@<?php echo htmlspecialchars($peminjaman['username']); ?>)</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Nama Alat:</div>
-                                    <div class="detail-value"><?php echo $peminjaman['nama_alat']; ?></div>
+                                    <div class="detail-value"><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Kondisi Alat:</div>
                                     <div class="detail-value">
-                                        <span class="kondisi-badge kondisi-<?php echo $peminjaman['kondisi_alat']; ?>">
-                                            <?php echo ucfirst($peminjaman['kondisi_alat']); ?>
+                                        <span class="kondisi-badge kondisi-<?php echo htmlspecialchars($peminjaman['kondisi_alat']); ?>">
+                                            <?php echo htmlspecialchars(ucfirst($peminjaman['kondisi_alat'])); ?>
                                         </span>
                                     </div>
                                 </div>
@@ -638,23 +657,23 @@ if ($result->num_rows === 0) {
                             <div class="col-md-6">
                                 <div class="detail-item">
                                     <div class="detail-label">Jumlah:</div>
-                                    <div class="detail-value"><?php echo $peminjaman['jumlah']; ?></div>
+                                    <div class="detail-value"><?php echo htmlspecialchars($peminjaman['jumlah']); ?></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Tanggal Pinjam:</div>
-                                    <div class="detail-value"><?php echo date('d/m/Y', strtotime($peminjaman['tanggal_pinjam'])); ?></div>
+                                    <div class="detail-value"><?php echo htmlspecialchars(format_tanggal($peminjaman['tanggal_pinjam'])); ?></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Tanggal Kembali:</div>
                                     <div class="detail-value">
-                                        <?php echo $peminjaman['tanggal_kembali'] ? date('d/m/Y', strtotime($peminjaman['tanggal_kembali'])) : 'Belum dikembalikan'; ?>
+                                        <?php echo $peminjaman['tanggal_kembali'] ? htmlspecialchars(format_tanggal($peminjaman['tanggal_kembali'])) : 'Belum dikembalikan'; ?>
                                     </div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Status:</div>
                                     <div class="detail-value">
-                                        <span class="status-badge status-<?php echo $peminjaman['status']; ?>">
-                                            <?php echo ucfirst($peminjaman['status']); ?>
+                                        <span class="status-badge status-<?php echo htmlspecialchars($peminjaman['status']); ?>">
+                                            <?php echo htmlspecialchars(ucfirst($peminjaman['status'])); ?>
                                         </span>
                                     </div>
                                 </div>
@@ -663,7 +682,7 @@ if ($result->num_rows === 0) {
                         <?php if ($peminjaman['keterangan']): ?>
                         <div class="detail-item mt-3">
                             <div class="detail-label">Keterangan:</div>
-                            <div class="detail-value"><?php echo $peminjaman['keterangan']; ?></div>
+                            <div class="detail-value"><?php echo htmlspecialchars($peminjaman['keterangan']); ?></div>
                         </div>
                         <?php endif; ?>
                     </div>
@@ -682,8 +701,8 @@ if ($result->num_rows === 0) {
                     <div class="card-body-custom">
                         <div class="timeline">
                             <div class="timeline-item">
-                                <div class="timeline-date"><?php echo date('d/m/Y H:i', strtotime($peminjaman['created_at'])); ?></div>
-                                <div class="timeline-content">Peminjaman diajukan oleh <?php echo $peminjaman['nama_user']; ?></div>
+                                <div class="timeline-date"><?php echo htmlspecialchars(date('d/m/Y H:i', strtotime($peminjaman['created_at']))); ?></div>
+                                <div class="timeline-content">Peminjaman diajukan oleh <?php echo htmlspecialchars($peminjaman['nama_user']); ?></div>
                             </div>
                             <?php if ($peminjaman['status'] != 'menunggu'): ?>
                             <div class="timeline-item">
@@ -691,19 +710,19 @@ if ($result->num_rows === 0) {
                                     <?php 
                                     // Cek apakah kolom updated_at ada dan tidak kosong
                                     if (isset($peminjaman['updated_at']) && !empty($peminjaman['updated_at'])) {
-                                        echo date('d/m/Y H:i', strtotime($peminjaman['updated_at']));
+                                        echo htmlspecialchars(date('d/m/Y H:i', strtotime($peminjaman['updated_at'])));
                                     } else {
                                         // Jika tidak ada, gunakan created_at sebagai alternatif untuk mencegah error
-                                        echo date('d/m/Y H:i', strtotime($peminjaman['created_at']));
+                                        echo htmlspecialchars(date('d/m/Y H:i', strtotime($peminjaman['created_at'])));
                                     }
                                     ?>
                                 </div>
-                                <div class="timeline-content">Status diperbarui menjadi <span class="status-badge status-<?php echo $peminjaman['status']; ?>"><?php echo ucfirst($peminjaman['status']); ?></span></div>
+                                <div class="timeline-content">Status diperbarui menjadi <span class="status-badge status-<?php echo htmlspecialchars($peminjaman['status']); ?>"><?php echo htmlspecialchars(ucfirst($peminjaman['status'])); ?></span></div>
                             </div>
                             <?php endif; ?>
                             <?php if ($peminjaman['tanggal_kembali']): ?>
                             <div class="timeline-item">
-                                <div class="timeline-date"><?php echo date('d/m/Y H:i', strtotime($peminjaman['tanggal_kembali'])); ?></div>
+                                <div class="timeline-date"><?php echo htmlspecialchars(date('d/m/Y H:i', strtotime($peminjaman['tanggal_kembali']))); ?></div>
                                 <div class="timeline-content">Alat telah dikembalikan</div>
                             </div>
                             <?php endif; ?>
@@ -727,7 +746,7 @@ if ($result->num_rows === 0) {
                                 <i data-lucide="arrow-left"></i>
                                 Kembali
                             </a>
-                            <a href="print_peminjaman.php?id=<?php echo $peminjaman['id']; ?>" class="btn btn-custom btn-secondary-custom" target="_blank">
+                            <a href="print_peminjaman.php?id=<?php echo (int)$peminjaman['id']; ?>" class="btn btn-custom btn-secondary-custom" target="_blank">
                                 <i data-lucide="printer"></i>
                                 Cetak
                             </a>

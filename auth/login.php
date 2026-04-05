@@ -1,82 +1,121 @@
 <?php
+// Memulai sesi
 session_start();
+
+// Include file helpers yang berisi fungsi-fungsi penting
+require_once '../config/helpers.php';
+// Include kelas Database
 require_once '../config/database.php';
 
-$error = '';
+// --- PERBAIKAN 1: Cek role pengguna yang sudah login ---
+// Jika user sudah login, arahkan ke dashboard yang SESUAI perannya
+if (isset($_SESSION['user']['role'])) {
+    $role = $_SESSION['user']['role'];
+    if ($role == 'admin') {
+        header("Location: ../admin/dashboard.php");
+    } elseif ($role == 'petugas') {
+        header("Location: ../petugas/dashboard.php");
+    } else { // Asumsi role lainnya adalah 'peminjam'
+        header("Location: ../peminjam/dashboard.php");
+    }
+    exit();
+}
 
+// Dapatkan koneksi database dari kelas Database
+ $pdo = Database::getConnection();
+
+// Inisialisasi variabel untuk pesan error
+ $error = '';
+
+// Proses jika form dikirim dengan metode POST
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // Ambil dan bersihkan input dari form
     $username = sanitize_input($_POST['username']);
     $password = $_POST['password'];
-    
-    $db = new Database();
-    $conn = $db->getConnection();
-    
-    $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
-    $stmt->bind_param("s", $username);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows == 1) {
-        $user = $result->fetch_assoc();
+
+    // Validasi input agar tidak kosong
+    if (empty($username) || empty($password)) {
+        $error = "Username dan password harus diisi.";
+    } else {
+        // Siapkan query untuk mengambil data user berdasarkan username
+        $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ?");
+        $stmt->execute([$username]);
         
-        if (password_verify($password, $user['password'])) {
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['nama'] = $user['nama'];
-            $_SESSION['role'] = $user['role'];
+        // Ambil hasil query
+        $user = $stmt->fetch();
+
+        // Periksa apakah user ditemukan dan password cocok
+        if ($user && password_verify($password, $user['password'])) {
+            // Jika login berhasil, buat sesi untuk user
+            $_SESSION['user'] = [
+                'id'       => $user['id'],
+                'nama'     => $user['nama'],
+                'username' => $user['username'],
+                'role'     => $user['role']
+            ];
             
-            log_activity($user['id'], "Login ke sistem");
-            
-            // Redirect based on role
-            switch ($user['role']) {
-                case 'admin':
-                    header("Location: ../admin/dashboard.php");
-                    break;
-                case 'petugas':
-                    header("Location: ../petugas/dashboard.php");
-                    break;
-                case 'peminjam':
-                    header("Location: ../peminjam/dashboard.php");
-                    break;
-                default:
-                    header("Location: ../auth/login.php");
+            // Catat aktivitas login ke log
+            log_activity($user['id'], "User " . $user['username'] . " berhasil login");
+
+            // --- PERBAIKAN 2: Arahkan user ke dashboard sesuai perannya ---
+            if ($user['role'] == 'admin') {
+                header("Location: ../admin/dashboard.php");
+            } elseif ($user['role'] == 'petugas') {
+                header("Location: ../petugas/dashboard.php");
+            } else { // Asumsi role lainnya adalah 'peminjam'
+                header("Location: ../peminjam/dashboard.php");
             }
             exit();
         } else {
-            $error = "Password salah!";
+            // Jika username atau password salah
+            $error = "Username atau password salah.";
         }
-    } else {
-        $error = "Username tidak ditemukan!";
     }
-    
-    $stmt->close();
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Sistem Peminjaman Alat</title>
+    <title>Login - Office Track</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="../assets/css/style.css">
+    
+    <!-- --- TAMBAHKAN CSS INI UNTUK MENGHILANGKAN SCROLLBAR --- -->
+    <style>
+        /* Atur agar html dan body memenuhi seluruh layar tanpa margin */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden; /* Hilangkan scrollbar horizontal */
+        }
+
+        /* Gunakan Flexbox pada .login-container untuk mengatur posisi tengah */
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%; /* Pastikan container mengisi tinggi body */
+        }
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container">
-        <div class="row justify-content-center align-items-center min-vh-100">
+<body>
+    <div class="login-container">
+        <!-- --- PERUBAHAN: HAPUS CLASS 'min-vh-100' DARI BARIS INI --- -->
+        <div class="row justify-content-center align-items-center w-100">
             <div class="col-md-6 col-lg-4">
                 <div class="card shadow">
                     <div class="card-body">
                         <div class="text-center mb-4">
-                            <h3 class="text-primary">Sistem Peminjaman Alat</h3>
+                            <h3 class="text-primary">Office Track</h3>
                             <p class="text-muted">Silakan login untuk melanjutkan</p>
                         </div>
                         
                         <?php if ($error): ?>
                             <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                                <?php echo $error; ?>
-                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                                <?php echo htmlspecialchars($error); ?>
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                             </div>
                         <?php endif; ?>
                         
@@ -99,14 +138,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             <button type="submit" class="btn btn-primary w-100">Login</button>
                         </form>
                         
-                        <div class="text-center mt-3">
-                            <small class="text-muted">
-                                Default Login:<br>
-                                Admin: admin/admin123<br>
-                                Petugas: petugas/petugas123<br>
-                                Peminjam: peminjam/peminjam123
-                            </small>
-                        </div>
                     </div>
                 </div>
             </div>

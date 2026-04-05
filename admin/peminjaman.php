@@ -1,31 +1,45 @@
 <?php
+// Memulai session
 session_start();
-require_once '../config/database.php';
 
-// Check login and role
+// Memuat file koneksi database dan helper
+require_once '../config/database.php';
+require_once '../config/helpers.php'; // --- TAMBAHKAN BARIS INI ---
+
+// Periksa login dan role user
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERBAIKAN CARA KONEKSI ---
+// Ambil koneksi database dari kelas Database (pola Singleton)
+ $conn = Database::getConnection();
 
+// --- PERBAIKAN LOGIKA HAPUS ---
 // Handle delete
 if (isset($_GET['delete'])) {
     $id = $_GET['delete'];
-    $stmt = $conn->prepare("DELETE FROM peminjaman WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $stmt->close();
+
+    // --- GUNAKAN SINTAKS PDO ---
+    $stmt = $conn->prepare("DELETE FROM peminjaman WHERE id = :id");
+    $stmt->bindParam(':id', $id, PDO::PARAM_INT);
     
-    log_activity($_SESSION['user_id'], "Menghapus peminjaman dengan ID: $id");
+    if ($stmt->execute()) {
+        // --- PERBAIKAN AKSES SESSION ---
+        log_activity($_SESSION['user']['id'], "Menghapus data peminjaman dengan ID: $id");
+        $_SESSION['success'] = "Data peminjaman berhasil dihapus.";
+    } else {
+        $_SESSION['error'] = "Gagal menghapus data peminjaman.";
+    }
+
     header("Location: peminjaman.php");
     exit();
 }
 
+// --- PERBAIKAN QUERY DAN PENGAMBILAN DATA ---
 // Get all peminjaman with user and alat info
  $stmt = $conn->prepare("SELECT p.*, u.nama as nama_user, a.nama_alat FROM peminjaman p JOIN users u ON p.user_id = u.id JOIN alat a ON p.alat_id = a.id ORDER BY p.created_at DESC");
  $stmt->execute();
- $result = $stmt->get_result();
+ $peminjaman_list = $stmt->fetchAll(PDO::FETCH_ASSOC); // --- GANTI get_result() DENGAN fetchAll() ---
 ?>
 
 <!DOCTYPE html>
@@ -259,6 +273,25 @@ if (isset($_GET['delete'])) {
         .btn-action:hover {
             transform: translateY(-2px);
         }
+        
+        /* Alert Styles */
+        .alert-custom {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 300;
+            border: none;
+        }
+
+        .alert-danger-custom {
+            background-color: rgba(251, 86, 7, 0.1);
+            color: var(--danger-color);
+        }
+
+        .alert-success-custom {
+            background-color: rgba(6, 255, 165, 0.1);
+            color: var(--success-color);
+        }
 
         /* Mobile Responsiveness */
         .mobile-menu-btn {
@@ -302,7 +335,7 @@ if (isset($_GET['delete'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -348,7 +381,6 @@ if (isset($_GET['delete'])) {
         </nav>
     </aside>
 
-
     <!-- Main Content -->
     <main class="main-content">
         <!-- Top Header -->
@@ -360,11 +392,12 @@ if (isset($_GET['delete'])) {
                 <h1 class="page-title">Data Peminjaman</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- --- PERBAIKAN AKSES SESSION --- -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($_SESSION['user']['nama'], 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -374,11 +407,20 @@ if (isset($_GET['delete'])) {
             </div>
         </div>
 
+        <!-- --- TAMBAHKAN NOTIFIKASI --- -->
+        <!-- Alerts -->
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger-custom alert-custom"><?php echo $_SESSION['error']; unset($_SESSION['error']); ?></div>
+        <?php endif; ?>
+        
+        <?php if (isset($_SESSION['success'])): ?>
+            <div class="alert alert-success-custom alert-custom"><?php echo $_SESSION['success']; unset($_SESSION['success']); ?></div>
+        <?php endif; ?>
+
         <!-- Table Card -->
         <div class="table-card">
             <div class="card-header-custom">
                 <h5 class="mb-0">Daftar Peminjaman</h5>
-                
             </div>
             <div class="table-responsive">
                 <table class="table table-custom">
@@ -395,34 +437,41 @@ if (isset($_GET['delete'])) {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php $no = 1; while ($peminjaman = $result->fetch_assoc()): ?>
-                        <tr>
-                            <td><?php echo $no++; ?></td>
-                            <td><?php echo $peminjaman['nama_user']; ?></td>
-                            <td><?php echo $peminjaman['nama_alat']; ?></td>
-                            <td><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></td>
-                            <td><?php echo $peminjaman['tanggal_kembali'] ? format_tanggal($peminjaman['tanggal_kembali']) : '-'; ?></td>
-                            <td><?php echo $peminjaman['jumlah']; ?></td>
-                            <td>
-                                <span class="badge-custom badge-<?php 
-                                    echo $peminjaman['status'] == 'disetujui' ? 'success' : 
-                                        ($peminjaman['status'] == 'ditolak' ? 'danger' : 
-                                        ($peminjaman['status'] == 'dipinjam' ? 'primary' : 
-                                        ($peminjaman['status'] == 'dikembalikan' ? 'info' : 'warning'))); 
-                                ?>">
-                                    <?php echo ucfirst($peminjaman['status']); ?>
-                                </span>
-                            </td>
-                            <td>
-                                <a href="peminjaman_detail.php?id=<?php echo $peminjaman['id']; ?>" class="btn btn-info btn-action">
-                                    <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
-                                </a>
-                                <a href="peminjaman.php?delete=<?php echo $peminjaman['id']; ?>" class="btn btn-danger btn-action" onclick="return confirm('Apakah Anda yakin ingin menghapus peminjaman ini?')">
-                                    <i data-lucide="trash-2" style="width: 16px; height: 16px;"></i>
-                                </a>
-                            </td>
-                        </tr>
-                        <?php endwhile; ?>
+                        <?php $no = 1; if (!empty($peminjaman_list)): ?>
+                            <!-- --- GANTI WHILE DENGAN FOREACH --- -->
+                            <?php foreach ($peminjaman_list as $peminjaman): ?>
+                            <tr>
+                                <td><?php echo $no++; ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['nama_user']); ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></td>
+                                <td><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></td>
+                                <td><?php echo $peminjaman['tanggal_kembali'] ? format_tanggal($peminjaman['tanggal_kembali']) : '-'; ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['jumlah']); ?></td>
+                                <td>
+                                    <span class="badge-custom badge-<?php 
+                                        echo $peminjaman['status'] == 'disetujui' ? 'success' : 
+                                            ($peminjaman['status'] == 'ditolak' ? 'danger' : 
+                                            ($peminjaman['status'] == 'dipinjam' ? 'primary' : 
+                                            ($peminjaman['status'] == 'dikembalikan' ? 'info' : 'warning'))); 
+                                    ?>">
+                                        <?php echo ucfirst(htmlspecialchars($peminjaman['status'])); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <a href="peminjaman_detail.php?id=<?php echo $peminjaman['id']; ?>" class="btn btn-info btn-action">
+                                        <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
+                                    </a>
+                                    <a href="peminjaman.php?delete=<?php echo $peminjaman['id']; ?>" class="btn btn-danger btn-action" onclick="return confirm('Apakah Anda yakin ingin menghapus peminjaman ini?')">
+                                        <i data-lucide="trash-2" style="width: 16px; height: 16px;"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="8" class="text-center">Belum ada data peminjaman.</td>
+                            </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>

@@ -1,18 +1,27 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php'; // --- DITAMBAHKAN UNTUK MEMUAT FUNGSI BANTUAN ---
 
 // Check login and role
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+// PERBAIKAN 1: Gunakan metode statik untuk mendapatkan koneksi database
+ $conn = Database::getConnection();
 
-// Get all pengembalian with related data
- $stmt = $conn->prepare("SELECT pr.*, p.tanggal_pinjam, p.user_id, p.alat_id, u.nama as nama_user, a.nama_alat FROM pengembalian pr JOIN peminjaman p ON pr.peminjaman_id = p.id JOIN users u ON p.user_id = u.id JOIN alat a ON p.alat_id = a.id ORDER BY pr.created_at DESC");
- $stmt->execute();
- $result = $stmt->get_result();
+// PERBAIKAN 2: Refaktor query untuk bekerja dengan PDO
+// Metode get_result() hanya ada di mysqli, bukan PDO.
+// Di PDO, kita langsung mengambil hasilnya dengan fetchAll().
+try {
+    $stmt = $conn->prepare("SELECT pr.*, p.tanggal_pinjam, p.user_id, p.alat_id, u.nama as nama_user, a.nama_alat FROM pengembalian pr JOIN peminjaman p ON pr.peminjaman_id = p.id JOIN users u ON p.user_id = u.id JOIN alat a ON p.alat_id = a.id ORDER BY pr.created_at DESC");
+    $stmt->execute();
+    // Ambil semua hasil query ke dalam array asosiatif
+    $pengembalian_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    // Jika terjadi error pada query, tampilkan pesan (bisa dikembangkan menjadi notifikasi yang lebih baik)
+    die("Query gagal: " . $e->getMessage());
+}
 ?>
 
 <!DOCTYPE html>
@@ -83,6 +92,7 @@ check_role('admin');
             color: #6c757d;
             text-decoration: none;
             transition: all 0.2s ease;
+            cursor: pointer;
         }
 
         .menu-item:hover {
@@ -301,7 +311,7 @@ check_role('admin');
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -327,13 +337,13 @@ check_role('admin');
             </div>
 
             <!-- Transaksi Dropdown -->
-            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#transaksiDropdown" aria-expanded="false">
+            <div class="menu-item" data-bs-toggle="collapse" data-bs-target="#transaksiDropdown" aria-expanded="true">
                 <i data-lucide="arrow-right-left" class="menu-icon"></i>
                 <span class="menu-text">Transaksi</span>
                 <i data-lucide="chevron-down" class="menu-arrow"></i>
             </div>
             <div class="collapse show dropdown-menu-custom" id="transaksiDropdown">
-                <a href="peminjaman.php" class="menu-item">
+                <a href="peminjaman.php" class="menu-item ">
                     <span class="menu-text">Data Peminjaman</span>
                 </a>
                 <a href="pengembalian.php" class="menu-item active">
@@ -358,11 +368,11 @@ check_role('admin');
                 <h1 class="page-title">Data Pengembalian</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -372,12 +382,27 @@ check_role('admin');
             </div>
         </div>
 
+        <!-- Notifikasi -->
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
+        <?php if (isset($_SESSION['success'])): ?>
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($_SESSION['success']); unset($_SESSION['success']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
+
         <!-- Data Table Card -->
         <div class="data-card">
             <div class="card-header-custom">
                 <h5 class="mb-0">Daftar Pengembalian Alat</h5>
                 <span class="text-muted" style="font-size: 0.9rem;">
-                    Total: <?php echo $result->num_rows; ?> data
+                    <!-- PERBAIKAN 3: Hitung total data dari array hasil PDO -->
+                    Total: <?php echo count($pengembalian_list); ?> data
                 </span>
             </div>
             <div class="table-responsive">
@@ -395,23 +420,24 @@ check_role('admin');
                         </tr>
                     </thead>
                     <tbody>
-                        <?php $no = 1; while ($pengembalian = $result->fetch_assoc()): ?>
+                        <!-- PERBAIKAN 4: Gunakan foreach untuk loop array dari PDO -->
+                        <?php $no = 1; foreach ($pengembalian_list as $pengembalian): ?>
                         <tr>
                             <td><?php echo $no++; ?></td>
                             <td>
                                 <div style="display: flex; align-items: center;">
                                     <div style="width: 32px; height: 32px; border-radius: 50%; background-color: rgba(67, 97, 238, 0.1); color: var(--primary-color); display: flex; align-items: center; justify-content: center; margin-right: 10px; font-weight: 400;">
-                                        <?php echo strtoupper(substr($pengembalian['nama_user'], 0, 1)); ?>
+                                        <?php echo htmlspecialchars(strtoupper(substr($pengembalian['nama_user'], 0, 1))); ?>
                                     </div>
-                                    <span><?php echo $pengembalian['nama_user']; ?></span>
+                                    <span><?php echo htmlspecialchars($pengembalian['nama_user']); ?></span>
                                 </div>
                             </td>
-                            <td><?php echo $pengembalian['nama_alat']; ?></td>
-                            <td><?php echo format_tanggal($pengembalian['tanggal_pinjam']); ?></td>
-                            <td><?php echo format_tanggal($pengembalian['tanggal_kembali']); ?></td>
+                            <td><?php echo htmlspecialchars($pengembalian['nama_alat']); ?></td>
+                            <td><?php echo htmlspecialchars(format_tanggal($pengembalian['tanggal_pinjam'])); ?></td>
+                            <td><?php echo htmlspecialchars(format_tanggal($pengembalian['tanggal_kembali'])); ?></td>
                             <td>
                                 <span class="badge-custom badge-<?php echo $pengembalian['kondisi_kembali'] == 'baik' ? 'success' : ($pengembalian['kondisi_kembali'] == 'rusak_ringan' ? 'warning' : 'danger'); ?>">
-                                    <?php echo ucfirst(str_replace('_', ' ', $pengembalian['kondisi_kembali'])); ?>
+                                    <?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $pengembalian['kondisi_kembali']))); ?>
                                 </span>
                             </td>
                             <td>
@@ -420,13 +446,13 @@ check_role('admin');
                                 </span>
                             </td>
                             <td>
-                                <a href="pengembalian_detail.php?id=<?php echo $pengembalian['id']; ?>" class="btn-custom btn-info-custom">
+                                <a href="pengembalian_detail.php?id=<?php echo (int)$pengembalian['id']; ?>" class="btn-custom btn-info-custom">
                                     <i data-lucide="eye" style="width: 16px; height: 16px; margin-right: 5px;"></i>
                                     Detail
                                 </a>
                             </td>
                         </tr>
-                        <?php endwhile; ?>
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
             </div>

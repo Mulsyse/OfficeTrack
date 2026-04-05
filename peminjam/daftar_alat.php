@@ -1,58 +1,83 @@
 <?php
+// 1. Mulai sesi
 session_start();
+require_once '../config/helpers.php';
 require_once '../config/database.php';
 
-// Check login
-if (!isset($_SESSION['user_id'])) {
-    header('Location: ../auth/login.php');
-    exit;
+// 2. Cek login dan role dengan fungsi helper
+check_login();
+check_role('peminjam');
+
+// --- PERBAIKAN UTAMA: GUNAKAN PDO SECARA KONSISTEN ---
+
+// 5. Dapatkan koneksi database dan simpan dalam variabel $pdo
+// INI ADALAH BAGIAN YANG PALING PENTING: Gunakan nama variabel $pdo
+$pdo = Database::getConnection();
+
+// --- LOGIKA UNTUK MENAMPILKAN DATA ALAT ---
+
+// Inisialisasi variabel
+$search = '';
+$kategori_filter = '';
+$alat_list = [];
+$kategori_list = [];
+
+// Ambil daftar kategori untuk filter dropdown
+try {
+    $stmt_kategori = $pdo->query("SELECT id, nama_kategori FROM kategori ORDER BY nama_kategori ASC");
+    $kategori_list = $stmt_kategori->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    // Handle error jika perlu
+    die("Error mengambil kategori: " . $e->getMessage());
 }
 
-// Get database connection
- $db = new Database();
- $conn = $db->getConnection();
+// Proses pencarian dan filter
+if ($_SERVER["REQUEST_METHOD"] == "GET") {
+    $search = isset($_GET['search']) ? sanitize_input($_GET['search']) : '';
+    $kategori_filter = isset($_GET['kategori']) ? $_GET['kategori'] : '';
 
-// Get search and filter parameters
- $search = isset($_GET['search']) ? $_GET['search'] : '';
- $kategori_filter = isset($_GET['kategori']) ? $_GET['kategori'] : '';
+    // Bangun query dasar
+    $sql = "SELECT a.*, k.nama_kategori FROM alat a LEFT JOIN kategori k ON a.kategori_id = k.id WHERE 1=1";
+    $params = [];
 
-// Get categories for filter
- $stmt_kategori = $conn->prepare("SELECT * FROM kategori ORDER BY nama_kategori");
- $stmt_kategori->execute();
- $result_kategori = $stmt_kategori->get_result();
+    // Tambahkan kondisi pencarian
+    if (!empty($search)) {
+        $sql .= " AND a.nama_alat LIKE ?";
+        $params[] = '%' . $search . '%';
+    }
 
-// Build query
- $query = "SELECT a.*, k.nama_kategori FROM alat a LEFT JOIN kategori k ON a.kategori_id = k.id WHERE 1=1";
- $params = [];
+    // Tambahkan kondisi filter kategori
+    if (!empty($kategori_filter)) {
+        $sql .= " AND a.kategori_id = ?";
+        $params[] = $kategori_filter;
+    }
 
-if (!empty($search)) {
-    $query .= " AND a.nama_alat LIKE ?";
-    $params[] = "%$search%";
+    $sql .= " ORDER BY a.nama_alat ASC";
+
+    // Eksekusi query dengan prepared statement
+    try {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $alat_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        // Handle error jika perlu
+        die("Error mengambil data alat: " . $e->getMessage());
+    }
 }
-
-if (!empty($kategori_filter)) {
-    $query .= " AND a.kategori_id = ?";
-    $params[] = $kategori_filter;
-}
-
- $query .= " ORDER BY a.nama_alat";
-
-// Prepare and execute statement
- $stmt = $conn->prepare($query);
-if (!empty($params)) {
-    $types = str_repeat('s', count($params));
-    $stmt->bind_param($types, ...$params);
-}
- $stmt->execute();
- $result = $stmt->get_result();
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
+<!-- ... Sisanya (kode HTML, CSS, JavaScript) TIDAK PERLU DIUBAH ... -->
+<!DOCTYPE html>
+<html lang="id">
+<!-- ... sisanya kode HTML Anda ... -->
+<!DOCTYPE html>
+<html lang="id">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Daftar Alat - Sistem Peminjaman</title>
+    <title>Daftar Alat - Office Track</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
@@ -78,8 +103,10 @@ if (!empty($params)) {
         }
 
         body::-webkit-scrollbar {
-        display: none; /* Menyembunyikan scrollbar untuk Chrome, Safari, Opera */
+            display: none;
+            /* Menyembunyikan scrollbar untuk Chrome, Safari, Opera */
         }
+
         /* Sidebar */
         .sidebar {
             position: fixed;
@@ -195,7 +222,8 @@ if (!empty($params)) {
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
         }
 
-        .form-control, .form-select {
+        .form-control,
+        .form-select {
             border: 1px solid #eaeaea;
             border-radius: 8px;
             padding: 10px 15px;
@@ -203,7 +231,8 @@ if (!empty($params)) {
             transition: all 0.2s ease;
         }
 
-        .form-control:focus, .form-select:focus {
+        .form-control:focus,
+        .form-select:focus {
             border-color: var(--primary-color);
             box-shadow: 0 0 0 0.2rem rgba(67, 97, 238, 0.1);
         }
@@ -470,12 +499,13 @@ if (!empty($params)) {
         }
     </style>
 </head>
+
 <body>
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -512,11 +542,13 @@ if (!empty($params)) {
                 <h1 class="page-title">Daftar Alat Tersedia</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang,
+                    <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
-                    <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown"
+                        data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($_SESSION['user']['nama'], 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -535,7 +567,8 @@ if (!empty($params)) {
                             <i data-lucide="search" style="width: 16px; height: 16px; margin-right: 5px;"></i>
                             Cari Alat
                         </label>
-                        <input type="text" class="form-control" id="search" name="search" value="<?php echo $search; ?>" placeholder="Masukkan nama alat...">
+                        <input type="text" class="form-control" id="search" name="search"
+                            value="<?php echo htmlspecialchars($search); ?>" placeholder="Masukkan nama alat...">
                     </div>
                     <div class="col-md-4">
                         <label for="kategori" class="form-label">
@@ -544,11 +577,12 @@ if (!empty($params)) {
                         </label>
                         <select class="form-select" id="kategori" name="kategori">
                             <option value="">Semua Kategori</option>
-                            <?php while ($kategori = $result_kategori->fetch_assoc()): ?>
-                            <option value="<?php echo $kategori['id']; ?>" <?php echo $kategori_filter == $kategori['id'] ? 'selected' : ''; ?>>
-                                <?php echo $kategori['nama_kategori']; ?>
-                            </option>
-                            <?php endwhile; ?>
+                            <!-- PERBAIKAN: Gunakan foreach dan variabel $kategori_list -->
+                            <?php foreach ($kategori_list as $kategori): ?>
+                                <option value="<?php echo $kategori['id']; ?>" <?php echo $kategori_filter == $kategori['id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($kategori['nama_kategori']); ?>
+                                </option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
                     <div class="col-md-2">
@@ -563,43 +597,48 @@ if (!empty($params)) {
         </div>
 
         <!-- Alat Grid -->
-        <?php if ($result->num_rows > 0): ?>
+        <!-- PERBAIKAN: Gunakan !empty($alat_list) dan foreach -->
+        <?php if (!empty($alat_list)): ?>
             <div class="alat-grid">
-                <?php while ($alat = $result->fetch_assoc()): ?>
-                <div class="alat-card">
-                    <div class="alat-card-header">
-                        <div>
-                            <h5 class="alat-title"><?php echo $alat['nama_alat']; ?></h5>
-                            <span class="alat-kategori"><?php echo $alat['nama_kategori'] ?: 'Tidak ada kategori'; ?></span>
+                <?php foreach ($alat_list as $alat): ?>
+                    <div class="alat-card">
+                        <div class="alat-card-header">
+                            <div>
+                                <h5 class="alat-title"><?php echo htmlspecialchars($alat['nama_alat']); ?></h5>
+                                <span
+                                    class="alat-kategori"><?php echo htmlspecialchars($alat['nama_kategori'] ?: 'Tidak ada kategori'); ?></span>
+                            </div>
+                            <span class="alat-id">#<?php echo str_pad($alat['id'], 4, '0', STR_PAD_LEFT); ?></span>
                         </div>
-                        <span class="alat-id">#<?php echo str_pad($alat['id'], 4, '0', STR_PAD_LEFT); ?></span>
+
+                        <div class="alat-badges">
+                            <span
+                                class="badge-custom badge-<?php echo $alat['stok'] > 5 ? 'success' : ($alat['stok'] > 0 ? 'warning' : 'danger'); ?>">
+                                <i data-lucide="package" style="width: 12px; height: 12px;"></i>
+                                Stok: <?php echo $alat['stok']; ?>
+                            </span>
+                            <span
+                                class="badge-custom badge-<?php echo $alat['kondisi'] == 'baik' ? 'success' : ($alat['kondisi'] == 'rusak_ringan' ? 'warning' : 'danger'); ?>">
+                                <i data-lucide="check-circle" style="width: 12px; height: 12px;"></i>
+                                <?php echo ucfirst(htmlspecialchars($alat['kondisi'])); ?>
+                            </span>
+                        </div>
+
+                        <p class="alat-description">
+                            <?php echo htmlspecialchars(substr($alat['deskripsi'] ?: 'Tidak ada deskripsi', 0, 100)); ?></p>
+
+                        <div class="alat-actions">
+                            <button class="btn-custom btn-primary-custom" onclick="showDetail(<?php echo $alat['id']; ?>)">
+                                <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
+                                Detail
+                            </button>
+                            <a href="pinjam_alat.php?alat_id=<?php echo $alat['id']; ?>" class="btn-custom btn-success-custom">
+                                <i data-lucide="plus" style="width: 16px; height: 16px;"></i>
+                                Pinjam
+                            </a>
+                        </div>
                     </div>
-                    
-                    <div class="alat-badges">
-                        <span class="badge-custom badge-<?php echo $alat['stok'] > 5 ? 'success' : ($alat['stok'] > 0 ? 'warning' : 'danger'); ?>">
-                            <i data-lucide="package" style="width: 12px; height: 12px;"></i>
-                            Stok: <?php echo $alat['stok']; ?>
-                        </span>
-                        <span class="badge-custom badge-<?php echo $alat['kondisi'] == 'baik' ? 'success' : ($alat['kondisi'] == 'rusak_ringan' ? 'warning' : 'danger'); ?>">
-                            <i data-lucide="check-circle" style="width: 12px; height: 12px;"></i>
-                            <?php echo ucfirst($alat['kondisi']); ?>
-                        </span>
-                    </div>
-                    
-                    <p class="alat-description"><?php echo substr($alat['deskripsi'] ?: 'Tidak ada deskripsi', 0, 100); ?></p>
-                    
-                    <div class="alat-actions">
-                        <button class="btn-custom btn-primary-custom" onclick="showDetail(<?php echo $alat['id']; ?>)">
-                            <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
-                            Detail
-                        </button>
-                        <a href="pinjam_alat.php?alat_id=<?php echo $alat['id']; ?>" class="btn-custom btn-success-custom">
-                            <i data-lucide="plus" style="width: 16px; height: 16px;"></i>
-                            Pinjam
-                        </a>
-                    </div>
-                </div>
-                <?php endwhile; ?>
+                <?php endforeach; ?>
             </div>
         <?php else: ?>
             <div class="empty-state">
@@ -638,14 +677,14 @@ if (!empty($params)) {
     <script>
         // Initialize Lucide icons
         lucide.createIcons();
-        
+
         // Mobile menu toggle
-        document.getElementById('mobileMenuBtn').addEventListener('click', function() {
+        document.getElementById('mobileMenuBtn').addEventListener('click', function () {
             document.getElementById('sidebar').classList.toggle('active');
         });
-        
+
         // Reinitialize Lucide icons after DOM changes
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             lucide.createIcons();
         });
 
@@ -655,7 +694,7 @@ if (!empty($params)) {
                 .then(response => response.text())
                 .then(data => {
                     document.getElementById('modalContent').innerHTML = data;
-                    document.getElementById('pinjamBtn').onclick = function() {
+                    document.getElementById('pinjamBtn').onclick = function () {
                         window.location.href = `pinjam_alat.php?alat_id=${alatId}`;
                     };
                     const modal = new bootstrap.Modal(document.getElementById('detailModal'));
@@ -671,4 +710,5 @@ if (!empty($params)) {
         }
     </script>
 </body>
+
 </html>

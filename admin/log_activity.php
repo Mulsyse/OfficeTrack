@@ -1,18 +1,24 @@
 <?php
+// Memulai session
 session_start();
-require_once '../config/database.php';
 
-// Check login and role
+// Memuat file koneksi database dan helper
+require_once '../config/database.php';
+require_once '../config/helpers.php'; // --- TAMBAHKAN BARIS INI ---
+
+// Periksa login dan role user
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERBAIKAN CARA KONEKSI ---
+// Ambil koneksi database dari kelas Database (pola Singleton)
+ $conn = Database::getConnection();
 
+// --- PERBAIKAN QUERY DAN PENGAMBILAN DATA ---
 // Get all log activities with user info
  $stmt = $conn->prepare("SELECT la.*, u.nama FROM log_aktivitas la JOIN users u ON la.user_id = u.id ORDER BY la.waktu DESC");
  $stmt->execute();
- $result = $stmt->get_result();
+ $log_activities = $stmt->fetchAll(PDO::FETCH_ASSOC); // --- GANTI get_result() DENGAN fetchAll() ---
 ?>
 
 <!DOCTYPE html>
@@ -231,6 +237,25 @@ check_role('admin');
         .activity-action {
             color: #333;
         }
+        
+        /* Alert Styles */
+        .alert-custom {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 300;
+            border: none;
+        }
+
+        .alert-danger-custom {
+            background-color: rgba(251, 86, 7, 0.1);
+            color: var(--danger-color);
+        }
+
+        .alert-success-custom {
+            background-color: rgba(6, 255, 165, 0.1);
+            color: var(--success-color);
+        }
 
         /* Mobile Responsiveness */
         .mobile-menu-btn {
@@ -282,7 +307,7 @@ check_role('admin');
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -336,11 +361,12 @@ check_role('admin');
                 <h1 class="page-title">Log Aktivitas User</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;"><?php echo $_SESSION['nama']; ?></span>
+                <!-- --- PERBAIKAN AKSES SESSION --- -->
+                <span style="margin-right: 10px;"><?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($_SESSION['user']['nama'], 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -349,6 +375,16 @@ check_role('admin');
                 </div>
             </div>
         </div>
+
+        <!-- --- TAMBAHKAN NOTIFIKASI --- -->
+        <!-- Alerts -->
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger-custom alert-custom"><?php echo $_SESSION['error']; unset($_SESSION['error']); ?></div>
+        <?php endif; ?>
+        
+        <?php if (isset($_SESSION['success'])): ?>
+            <div class="alert alert-success-custom alert-custom"><?php echo $_SESSION['success']; unset($_SESSION['success']); ?></div>
+        <?php endif; ?>
 
         <!-- Activity Log Table -->
         <div class="table-card">
@@ -369,14 +405,20 @@ check_role('admin');
                         </tr>
                     </thead>
                     <tbody>
-                        <?php $no = 1; while ($log = $result->fetch_assoc()): ?>
-                        <tr>
-                            <td><?php echo $no++; ?></td>
-                            <td class="activity-time"><?php echo date('d/m/Y H:i:s', strtotime($log['waktu'])); ?></td>
-                            <td class="activity-user"><?php echo $log['nama']; ?></td>
-                            <td class="activity-action"><?php echo $log['aktivitas']; ?></td>
-                        </tr>
-                        <?php endwhile; ?>
+                        <?php $no = 1; if (!empty($log_activities)): ?>
+                            <?php foreach ($log_activities as $log): ?>
+                            <tr>
+                                <td><?php echo $no++; ?></td>
+                                <td class="activity-time"><?php echo date('d/m/Y H:i:s', strtotime($log['waktu'])); ?></td>
+                                <td class="activity-user"><?php echo htmlspecialchars($log['nama']); ?></td>
+                                <td class="activity-action"><?php echo htmlspecialchars($log['aktivitas']); ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="4" class="text-center">Belum ada aktivitas yang tercatat.</td>
+                            </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>

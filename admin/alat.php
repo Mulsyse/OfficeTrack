@@ -1,33 +1,39 @@
 <?php
 session_start();
+// --- PERUBAHAN 1: Tambahkan require untuk helpers.php ---
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('admin');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERUBAHAN 2: Gunakan cara baru untuk mendapatkan koneksi PDO ---
+ $pdo = Database::getConnection();
 
 // Handle delete
 if (isset($_GET['delete'])) {
     $id = $_GET['delete'];
-    $stmt = $conn->prepare("DELETE FROM alat WHERE id = ?");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $stmt->close();
     
-    log_activity($_SESSION['user_id'], "Menghapus alat dengan ID: $id");
-    header("Location: alat.php");
-    exit(); 
+    // --- PERUBAHAN 3: Ubah query delete ke sintaks PDO ---
+    $stmt = $pdo->prepare("DELETE FROM alat WHERE id = ?");
+    if ($stmt->execute([$id])) {
+        // --- PERUBAHAN 4: Ganti log_activity() dengan query PDO langsung ---
+        // Log aktivitas hapus
+        $log_stmt = $pdo->prepare("INSERT INTO log_aktivitas (user_id, aktivitas, waktu) VALUES (?, ?, NOW())");
+        $log_stmt->execute([$_SESSION['user']['id'], "Menghapus alat dengan ID: $id"]);
+        
+        header("Location: alat.php");
+        exit(); 
+    }
+    // --- PERUBAHAN 5: Tidak perlu $stmt->close() di PDO ---
 }
 
+// --- PERUBAHAN 6: Ubah query select ke sintaks PDO ---
 // Get all alat with kategori
- $stmt = $conn->prepare("SELECT a.*, k.nama_kategori FROM alat a LEFT JOIN kategori k ON a.kategori_id = k.id ORDER BY a.created_at DESC");
- $stmt->execute();
- $result = $stmt->get_result();
+ $stmt = $pdo->query("SELECT a.*, k.nama_kategori FROM alat a LEFT JOIN kategori k ON a.kategori_id = k.id ORDER BY a.created_at DESC");
+ $alat_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -360,7 +366,7 @@ if (isset($_GET['delete'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -414,11 +420,12 @@ if (isset($_GET['delete'])) {
                 <h1 class="page-title">Data Alat</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;"><?php echo $_SESSION['nama']; ?></span>
+                <!-- --- PERUBAHAN 7: Gunakan struktur sesi baru dan escape output --- -->
+                <span style="margin-right: 10px;"><?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($_SESSION['user']['nama'], 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -450,23 +457,24 @@ if (isset($_GET['delete'])) {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php $no = 1; while ($alat = $result->fetch_assoc()): ?>
+                        <!-- --- PERUBAHAN 8: Ubah loop untuk PDO dan escape semua output --- -->
+                        <?php $no = 1; foreach ($alat_list as $alat): ?>
                         <tr>
                             <td><?php echo $no++; ?></td>
-                            <td><?php echo $alat['nama_alat']; ?></td>
-                            <td><?php echo $alat['nama_kategori'] ?: 'Tidak ada kategori'; ?></td>
+                            <td><?php echo htmlspecialchars($alat['nama_alat']); ?></td>
+                            <td><?php echo htmlspecialchars($alat['nama_kategori'] ?: 'Tidak ada kategori'); ?></td>
                             <td>
                                 <span class="badge-custom badge-<?php echo $alat['stok'] > 5 ? 'high-stock' : ($alat['stok'] > 0 ? 'medium-stock' : 'low-stock'); ?>">
-                                    <?php echo $alat['stok']; ?>
+                                    <?php echo htmlspecialchars($alat['stok']); ?>
                                 </span>
                             </td>
                             <td>
                                 <span class="badge-custom badge-<?php echo $alat['kondisi'] == 'baik' ? 'good' : ($alat['kondisi'] == 'rusak_ringan' ? 'light-damage' : 'heavy-damage'); ?>">
-                                    <?php echo ucfirst($alat['kondisi']); ?>
+                                    <?php echo htmlspecialchars(ucfirst($alat['kondisi'])); ?>
                                 </span>
                             </td>
-                            <td class="description-cell" title="<?php echo $alat['deskripsi'] ?: '-'; ?>">
-                                <?php echo substr($alat['deskripsi'] ?: '-', 0, 50); ?>
+                            <td class="description-cell" title="<?php echo htmlspecialchars($alat['deskripsi'] ?: '-'); ?>">
+                                <?php echo htmlspecialchars(substr($alat['deskripsi'] ?: '-', 0, 50)); ?>
                             </td>
                             <td>
                                 <div class="action-buttons">
@@ -479,7 +487,7 @@ if (isset($_GET['delete'])) {
                                 </div>
                             </td>
                         </tr>
-                        <?php endwhile; ?>
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
             </div>
@@ -499,18 +507,15 @@ if (isset($_GET['delete'])) {
         // Handle dropdown toggles
         document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(element => {
             element.addEventListener('click', function() {
-                // Toggle aria-expanded attribute
                 const isExpanded = this.getAttribute('aria-expanded') === 'true';
                 this.setAttribute('aria-expanded', !isExpanded);
                 
-                // Reinitialize Lucide icons to ensure proper rendering
                 setTimeout(() => {
                     lucide.createIcons();
                 }, 10);
             });
         });
 
-        // Reinitialize Lucide icons after DOM changes
         document.addEventListener('DOMContentLoaded', function() {
             lucide.createIcons();
         });
