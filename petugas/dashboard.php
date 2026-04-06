@@ -1,65 +1,44 @@
 <?php
 session_start();
 require_once '../config/database.php';
-
-// Fungsi helper (asumsikan ada di file lain atau buat di sini)
-if (!function_exists('check_login')) {
-    function check_login() {
-        if (!isset($_SESSION['user_id'])) {
-            header('Location: ../auth/login.php');
-            exit;
-        }
-    }
-}
-if (!function_exists('check_role')) {
-    function check_role($role) {
-        if ($_SESSION['role'] != $role) {
-            // Redirect atau tampilkan error jika role tidak sesuai
-            header('Location: ../auth/unauthorized.php');
-            exit;
-        }
-    }
-}
-if (!function_exists('format_tanggal')) {
-    function format_tanggal($tanggal) {
-        // Contoh fungsi, sesuaikan dengan format yang Anda inginkan
-        return date('d M Y', strtotime($tanggal));
-    }
-}
-
+require_once '../config/helpers.php'; // Include file helper yang sudah benar
 
 // Check login and role
 check_login();
 check_role('petugas');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERBAIKAN 1: Ambil data user dari sesi dengan struktur yang benar ---
+ $user_data = $_SESSION['user'];
 
+// --- PERBAIKAN 2: Gunakan koneksi PDO secara statis ---
+ $conn = Database::getConnection();
+
+// --- PERBAIKAN 3: Gunakan query() dan fetchColumn() untuk statistik (lebih efisien) ---
 // Get statistics
- $stmt_total_peminjaman = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman");
- $stmt_total_peminjaman->execute();
- $result_total_peminjaman = $stmt_total_peminjaman->get_result();
- $total_peminjaman = $result_total_peminjaman->fetch_assoc()['total'];
+ $stmt_total_peminjaman = $conn->query("SELECT COUNT(*) FROM peminjaman");
+ $total_peminjaman = $stmt_total_peminjaman->fetchColumn();
 
- $stmt_pending = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'pending'");
- $stmt_pending->execute();
- $result_pending = $stmt_pending->get_result();
- $total_pending = $result_pending->fetch_assoc()['total'];
+ $stmt_pending = $conn->query("SELECT COUNT(*) FROM peminjaman WHERE status = 'pending'");
+ $total_pending = $stmt_pending->fetchColumn();
 
- $stmt_disetujui = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'disetujui'");
- $stmt_disetujui->execute();
- $result_disetujui = $stmt_disetujui->get_result();
- $total_disetujui = $result_disetujui->fetch_assoc()['total'];
+ $stmt_disetujui = $conn->query("SELECT COUNT(*) FROM peminjaman WHERE status = 'disetujui'");
+ $total_disetujui = $stmt_disetujui->fetchColumn();
 
- $stmt_dipinjam = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'dipinjam'");
- $stmt_dipinjam->execute();
- $result_dipinjam = $stmt_dipinjam->get_result();
- $total_dipinjam = $result_dipinjam->fetch_assoc()['total'];
+ $stmt_dipinjam = $conn->query("SELECT COUNT(*) FROM peminjaman WHERE status = 'dipinjam'");
+ $total_dipinjam = $stmt_dipinjam->fetchColumn();
 
+// --- PERBAIKAN 4: Ambil data pending list dengan PDO dan fetchAll() ---
 // Get recent peminjaman pending
- $stmt_pending_list = $conn->prepare("SELECT p.*, u.nama as nama_user, a.nama_alat FROM peminjaman p JOIN users u ON p.user_id = u.id JOIN alat a ON p.alat_id = a.id WHERE p.status = 'pending' ORDER BY p.created_at DESC LIMIT 5");
+ $sql_pending_list = "SELECT p.*, u.nama as nama_user, a.nama_alat 
+                     FROM peminjaman p 
+                     JOIN users u ON p.user_id = u.id 
+                     JOIN alat a ON p.alat_id = a.id 
+                     WHERE p.status = 'pending' 
+                     ORDER BY p.created_at DESC 
+                     LIMIT 5";
+ $stmt_pending_list = $conn->prepare($sql_pending_list);
  $stmt_pending_list->execute();
- $result_pending_list = $stmt_pending_list->get_result();
+ $pending_list = $stmt_pending_list->fetchAll(PDO::FETCH_ASSOC); // Ambil semua data ke dalam array
 ?>
 
 <!DOCTYPE html>
@@ -72,6 +51,7 @@ check_role('petugas');
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
+        /* ... (CSS tidak berubah, saya biarkan seperti semula) ... */
         :root {
             --primary-color: #4361ee;
             --secondary-color: #3f37c9;
@@ -443,7 +423,7 @@ check_role('petugas');
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item active">
@@ -493,11 +473,12 @@ check_role('petugas');
                 <h1 class="page-title">Dashboard Petugas</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN 5: Gunakan variabel $user_data untuk nama user -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($user_data['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($user_data['nama'], 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -574,7 +555,8 @@ check_role('petugas');
                             Lihat Semua
                         </a>
                     </div>
-                    <?php if ($result_pending_list->num_rows > 0): ?>
+                    <!-- PERBAIKAN 6: Cek array $pending_list, gunakan foreach -->
+                    <?php if (!empty($pending_list)): ?>
                         <div class="table-responsive">
                             <table class="table-custom">
                                 <thead>
@@ -587,12 +569,12 @@ check_role('petugas');
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php while ($peminjaman = $result_pending_list->fetch_assoc()): ?>
+                                    <?php foreach ($pending_list as $peminjaman): ?>
                                     <tr>
-                                        <td><?php echo $peminjaman['nama_user']; ?></td>
-                                        <td><?php echo $peminjaman['nama_alat']; ?></td>
+                                        <td><?php echo htmlspecialchars($peminjaman['nama_user']); ?></td>
+                                        <td><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></td>
                                         <td><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></td>
-                                        <td><?php echo $peminjaman['jumlah']; ?></td>
+                                        <td><?php echo htmlspecialchars($peminjaman['jumlah']); ?></td>
                                         <td>
                                             <a href="peminjaman_detail.php?id=<?php echo $peminjaman['id']; ?>" class="btn-custom btn-info-custom">
                                                 <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
@@ -600,7 +582,7 @@ check_role('petugas');
                                             </a>
                                         </td>
                                     </tr>
-                                    <?php endwhile; ?>
+                                    <?php endforeach; ?>
                                 </tbody>
                             </table>
                         </div>

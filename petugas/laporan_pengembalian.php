@@ -1,44 +1,51 @@
-
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('petugas');
 
-$db = new Database();
-$conn = $db->getConnection();
+// --- PERUBAHAN: Ambil data user dari session untuk konsistensi (sama seperti laporan_peminjaman.php) ---
+ $user_data = $_SESSION['user'] ?? [];
+ $user_name = htmlspecialchars($user_data['nama'] ?? 'Petugas');
+// --- AKHIR PERUBAHAN ---
+
+// Get database connection using the singleton pattern
+ $conn = Database::getConnection();
 
 // Handle date filter
-$start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
-$end_date = isset($_GET['end_date']) ? $_GET['end_date'] : date('Y-m-t');
+ $start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
+ $end_date = isset($_GET['end_date']) ? $_GET['end_date'] : date('Y-m-t');
 
 // Get pengembalian data with filtering
-$query = "SELECT pr.*, p.tanggal_pinjam, p.user_id, p.alat_id, p.jumlah, u.nama as nama_user, a.nama_alat FROM pengembalian pr JOIN peminjaman p ON pr.peminjaman_id = p.id JOIN users u ON p.user_id = u.id JOIN alat a ON p.alat_id = a.id WHERE pr.tanggal_kembali BETWEEN ? AND ? ORDER BY pr.tanggal_kembali DESC";
-$stmt = $conn->prepare($query);
-$stmt->bind_param("ss", $start_date, $end_date);
-$stmt->execute();
-$result = $stmt->get_result();
+ $query = "SELECT pr.*, p.tanggal_pinjam, p.user_id, p.alat_id, p.jumlah, u.nama as nama_user, a.nama_alat 
+         FROM pengembalian pr 
+         JOIN peminjaman p ON pr.peminjaman_id = p.id 
+         JOIN users u ON p.user_id = u.id 
+         JOIN alat a ON p.alat_id = a.id 
+         WHERE pr.tanggal_kembali BETWEEN ? AND ? 
+         ORDER BY pr.tanggal_kembali DESC";
+ $stmt = $conn->prepare($query);
+ $stmt->execute([$start_date, $end_date]);
+ $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get statistics for report
-$stmt_total = $conn->prepare("SELECT COUNT(*) as total FROM pengembalian WHERE tanggal_kembali BETWEEN ? AND ?");
-$stmt_total->bind_param("ss", $start_date, $end_date);
-$stmt_total->execute();
-$result_total = $stmt_total->get_result();
-$total_transaksi = $result_total->fetch_assoc()['total'];
+ $stmt_total = $conn->prepare("SELECT COUNT(*) as total FROM pengembalian WHERE tanggal_kembali BETWEEN ? AND ?");
+ $stmt_total->execute([$start_date, $end_date]);
+ $total_transaksi = $stmt_total->fetch(PDO::FETCH_ASSOC)['total'];
 
-$stmt_total_alat = $conn->prepare("SELECT SUM(p.jumlah) as total FROM pengembalian pr JOIN peminjaman p ON pr.peminjaman_id = p.id WHERE pr.tanggal_kembali BETWEEN ? AND ?");
-$stmt_total_alat->bind_param("ss", $start_date, $end_date);
-$stmt_total_alat->execute();
-$result_total_alat = $stmt_total_alat->get_result();
-$total_alat_kembali = $result_total_alat->fetch_assoc()['total'];
+ $stmt_total_alat = $conn->prepare("SELECT SUM(p.jumlah) as total 
+                                  FROM pengembalian pr 
+                                  JOIN peminjaman p ON pr.peminjaman_id = p.id 
+                                  WHERE pr.tanggal_kembali BETWEEN ? AND ?");
+ $stmt_total_alat->execute([$start_date, $end_date]);
+ $total_alat_kembali = $stmt_total_alat->fetch(PDO::FETCH_ASSOC)['total'] ?: 0;
 
-$stmt_total_denda = $conn->prepare("SELECT SUM(pr.denda) as total FROM pengembalian pr WHERE pr.tanggal_kembali BETWEEN ? AND ?");
-$stmt_total_denda->bind_param("ss", $start_date, $end_date);
-$stmt_total_denda->execute();
-$result_total_denda = $stmt_total_denda->get_result();
-$total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
+ $stmt_total_denda = $conn->prepare("SELECT SUM(pr.denda) as total FROM pengembalian pr WHERE pr.tanggal_kembali BETWEEN ? AND ?");
+ $stmt_total_denda->execute([$start_date, $end_date]);
+ $total_denda = $stmt_total_denda->fetch(PDO::FETCH_ASSOC)['total'] ?: 0;
 ?>
 
 <!DOCTYPE html>
@@ -490,7 +497,7 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -528,7 +535,6 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
         </nav>
     </aside>
 
-
     <!-- Main Content -->
     <main class="main-content">
         <!-- Top Header -->
@@ -540,11 +546,11 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
                 <h1 class="page-title">Laporan Pengembalian</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo $user_name; ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($user_name, 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -573,7 +579,7 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
                 <div class="stat-card">
                     <div class="stat-card-header">
                         <div>
-                            <div class="stat-value"><?php echo $total_alat_kembali ?: 0; ?></div>
+                            <div class="stat-value"><?php echo $total_alat_kembali; ?></div>
                             <div class="stat-label">Alat Dikembalikan</div>
                         </div>
                         <div class="stat-icon success">
@@ -599,7 +605,7 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
                 <div class="stat-card">
                     <div class="stat-card-header">
                         <div>
-                            <div class="stat-value"><?php echo $result->num_rows; ?></div>
+                            <div class="stat-value"><?php echo count($result); ?></div>
                             <div class="stat-label">Data Ditampilkan</div>
                         </div>
                         <div class="stat-icon info">
@@ -668,13 +674,13 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
                         </thead>
                         <tbody>
                             <?php $no = 1; $total_pengembalian = 0; $total_denda_table = 0; 
-                            if ($result->num_rows > 0): 
-                                while ($pengembalian = $result->fetch_assoc()): ?>
+                            if (count($result) > 0): 
+                                foreach ($result as $pengembalian): ?>
                             <tr>
                                 <td><?php echo $no++; ?></td>
                                 <td><?php echo format_tanggal($pengembalian['tanggal_kembali']); ?></td>
-                                <td><?php echo $pengembalian['nama_user']; ?></td>
-                                <td><?php echo $pengembalian['nama_alat']; ?></td>
+                                <td><?php echo htmlspecialchars($pengembalian['nama_user']); ?></td>
+                                <td><?php echo htmlspecialchars($pengembalian['nama_alat']); ?></td>
                                 <td><?php echo $pengembalian['jumlah']; ?></td>
                                 <td>
                                     <span class="badge bg-<?php echo $pengembalian['kondisi_kembali'] == 'baik' ? 'success' : ($pengembalian['kondisi_kembali'] == 'rusak_ringan' ? 'warning' : 'danger'); ?>">
@@ -687,20 +693,29 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
                             <?php 
                             $total_pengembalian += $pengembalian['jumlah'];
                             $total_denda_table += $pengembalian['denda'];
-                            endwhile; 
+                            endforeach; 
                             else: ?>
                             <tr>
                                 <td colspan="8" class="text-center text-muted">Tidak ada data pengembalian pada periode ini</td>
                             </tr>
                             <?php endif; ?>
                         </tbody>
-                        <?php if ($result->num_rows > 0): ?>
+                        <?php if (count($result) > 0): ?>
+                        <tfoot>
+                            <tr class="table-primary">
+                                <th colspan="4">TOTAL</th>
+                                <th><?php echo $total_pengembalian; ?></th>
+                                <th>-</th>
+                                <th>Rp <?php echo number_format($total_denda_table, 0, ',', '.'); ?></th>
+                                <th>-</th>
+                            </tr>
+                        </tfoot>
                         <?php endif; ?>
                     </table>
                 </div>
                 
                 <!-- Summary -->
-                <?php if ($result->num_rows > 0): ?>
+                <?php if (count($result) > 0): ?>
                 <div class="row mt-4 no-print">
                     <div class="col-md-12">
                         <div class="filter-card">
@@ -715,7 +730,7 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
                                     </div>
                                     <div class="col-md-3">
                                         <strong>Total Alat Dikembalikan:</strong><br>
-                                        <span class="text-success"><?php echo $total_alat_kembali ?: 0; ?></span>
+                                        <span class="text-success"><?php echo $total_alat_kembali; ?></span>
                                     </div>
                                     <div class="col-md-3">
                                         <strong>Total Denda:</strong><br>
@@ -746,15 +761,19 @@ $total_denda = $result_total_denda->fetch_assoc()['total'] ?: 0;
         });
 
         // Handle dropdown arrows rotation
-        document.querySelectorAll('.dropdown-toggle').forEach(item => {
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(item => {
             item.addEventListener('click', function() {
-                const expanded = this.getAttribute('aria-expanded') === 'true';
+                const target = document.querySelector(this.getAttribute('data-bs-target'));
+                const expanded = target.classList.contains('show');
+                
+                // Update aria-expanded
                 this.setAttribute('aria-expanded', !expanded);
-
-                // Reinitialize Lucide icons to update arrow rotation
-                setTimeout(() => {
-                    lucide.createIcons();
-                }, 10);
+                
+                // Rotate arrow
+                const arrow = this.querySelector('.menu-arrow');
+                if (arrow) {
+                    arrow.style.transform = expanded ? 'rotate(0deg)' : 'rotate(180deg)';
+                }
             });
         });
 

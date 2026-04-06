@@ -1,29 +1,36 @@
 <?php
+// --- Langkah 1: Start Session ---
 session_start();
+
+// --- Langkah 2: Include File Fungsi ---
+require_once '../config/helpers.php'; 
 require_once '../config/database.php';
 
-// Check login
-if (!isset($_SESSION['user_id'])) {
-    header('Location: ../auth/login.php');
-    exit;
-}
+// --- Langkah 3: Otorisasi ---
+check_role('peminjam');
 
-// Get database connection
- $db = new Database();
- $conn = $db->getConnection();
- $user_id = $_SESSION['user_id'];
+// --- Langkah 4: Ambil Koneksi Database dan User ID ---
+ $pdo = Database::getConnection();
+ $user_id = $_SESSION['user']['id'];
 
-// Get peminjaman detail
+// --- Langkah 5: Query Database ---
 if (isset($_GET['id'])) {
     $id = $_GET['id'];
-    $stmt = $conn->prepare("SELECT p.*, a.nama_alat, a.kondisi as kondisi_alat FROM peminjaman p JOIN alat a ON p.alat_id = a.id WHERE p.id = ? AND p.user_id = ?");
-    $stmt->bind_param("ii", $id, $user_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $peminjaman = $result->fetch_assoc();
-    $stmt->close();
+    
+    $stmt = $pdo->prepare("SELECT p.*, a.nama_alat, a.kondisi as kondisi_alat 
+                           FROM peminjaman p 
+                           JOIN alat a ON p.alat_id = a.id 
+                           WHERE p.id = ? AND p.user_id = ?");
+    
+    $stmt->execute([$id, $user_id]);
+    $peminjaman = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if (!$peminjaman) {
+        // Set flash message dan redirect
+        $_SESSION['flash'] = [
+            'type' => 'danger',
+            'message' => 'Data peminjaman tidak ditemukan atau bukan milik Anda'
+        ];
         header("Location: peminjaman_saya.php");
         exit();
     }
@@ -32,17 +39,17 @@ if (isset($_GET['id'])) {
     exit();
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detail Peminjaman - Sistem Peminjaman</title>
+    <title>Detail Peminjaman - Office Track</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
+        /* CSS tetap sama seperti sebelumnya */
         :root {
             --primary-color: #4361ee;
             --secondary-color: #3f37c9;
@@ -57,7 +64,7 @@ if (isset($_GET['id'])) {
         }
 
         body {
-            overflow: hidden;
+            overflow-x: hidden;
             font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             font-weight: 300;
             background-color: #f5f7fb;
@@ -505,7 +512,7 @@ if (isset($_GET['id'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -542,11 +549,11 @@ if (isset($_GET['id'])) {
                 <h1 class="page-title">Detail Peminjaman</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($_SESSION['user']['nama'], 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -584,7 +591,7 @@ if (isset($_GET['id'])) {
                             <i data-lucide="user"></i>
                             Peminjam
                         </div>
-                        <div class="detail-value"><?php echo $_SESSION['nama']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($_SESSION['user']['nama']); ?></div>
                     </div>
                     
                     <div class="detail-row">
@@ -592,7 +599,7 @@ if (isset($_GET['id'])) {
                             <i data-lucide="package"></i>
                             Alat
                         </div>
-                        <div class="detail-value"><?php echo $peminjaman['nama_alat']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></div>
                     </div>
                     
                     <div class="detail-row">
@@ -609,7 +616,7 @@ if (isset($_GET['id'])) {
                             Tanggal Kembali
                         </div>
                         <div class="detail-value">
-                            <?php echo $peminjaman['tanggal_kembali'] ? format_tanggal($peminjaman['tanggal_kembali']) : 'Belum dikembalikan'; ?>
+                            <?php echo !empty($peminjaman['tanggal_kembali']) ? format_tanggal($peminjaman['tanggal_kembali']) : 'Belum dikembalikan'; ?>
                         </div>
                     </div>
                     
@@ -618,7 +625,7 @@ if (isset($_GET['id'])) {
                             <i data-lucide="layers"></i>
                             Jumlah
                         </div>
-                        <div class="detail-value"><?php echo $peminjaman['jumlah']; ?> unit</div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['jumlah']); ?> unit</div>
                     </div>
                     
                     <div class="detail-row">
@@ -639,18 +646,18 @@ if (isset($_GET['id'])) {
                                         ($peminjaman['status'] == 'dipinjam' ? 'package' : 
                                         ($peminjaman['status'] == 'dikembalikan' ? 'rotate-ccw' : 'clock'))); 
                                 ?>" style="width: 14px; height: 14px;"></i>
-                                <?php echo ucfirst($peminjaman['status']); ?>
+                                <?php echo ucfirst(htmlspecialchars($peminjaman['status'])); ?>
                             </span>
                         </div>
                     </div>
                     
-                    <?php if ($peminjaman['keterangan']): ?>
+                    <?php if (!empty($peminjaman['keterangan'])): ?>
                     <div class="detail-row">
                         <div class="detail-label">
                             <i data-lucide="message-square"></i>
                             Keterangan
                         </div>
-                        <div class="detail-value"><?php echo $peminjaman['keterangan']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['keterangan']); ?></div>
                     </div>
                     <?php endif; ?>
                     
@@ -687,7 +694,7 @@ if (isset($_GET['id'])) {
                                 <strong>Ditolak</strong><br>
                                 <span style="font-size: 0.9rem;">
                                     Maaf, peminjaman Anda ditolak. 
-                                    <?php echo $peminjaman['keterangan'] ? 'Alasan: ' . $peminjaman['keterangan'] : ''; ?>
+                                    <?php echo !empty($peminjaman['keterangan']) ? 'Alasan: ' . htmlspecialchars($peminjaman['keterangan']) : ''; ?>
                                 </span>
                             </div>
                         </div>
@@ -717,7 +724,7 @@ if (isset($_GET['id'])) {
                         </div>
                     <?php endif; ?>
                     
-                    <div class="mt-3 d-flex gap-2">
+                    <div class="mt-3 d-flex gap-2 flex-wrap">
                         <?php if ($peminjaman['status'] == 'disetujui' || $peminjaman['status'] == 'dipinjam'): ?>
                         <a href="pengembalian.php" class="btn-custom btn-warning-custom">
                             <i data-lucide="rotate-ccw"></i>
@@ -755,7 +762,7 @@ if (isset($_GET['id'])) {
                             <i data-lucide="tag"></i>
                             Nama Alat
                         </div>
-                        <div class="detail-value"><?php echo $peminjaman['nama_alat']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></div>
                     </div>
                     
                     <div class="detail-row">
@@ -765,7 +772,7 @@ if (isset($_GET['id'])) {
                         </div>
                         <div class="detail-value">
                             <span class="badge-custom badge-<?php echo $peminjaman['kondisi_alat'] == 'baik' ? 'success' : ($peminjaman['kondisi_alat'] == 'rusak_ringan' ? 'warning' : 'danger'); ?>">
-                                <?php echo ucfirst($peminjaman['kondisi_alat']); ?>
+                                <?php echo ucfirst(htmlspecialchars($peminjaman['kondisi_alat'])); ?>
                             </span>
                         </div>
                     </div>
@@ -803,17 +810,17 @@ if (isset($_GET['id'])) {
                         <div class="timeline-item">
                             <div class="timeline-date">
                                 <?php 
-                                $updated_at = date('d/m/Y H:i', strtotime($peminjaman['updated_at'] ?? $peminjaman['created_at']));
-                                echo $updated_at;
+                                $waktu_ubah = !empty($peminjaman['updated_at']) ? $peminjaman['updated_at'] : $peminjaman['created_at'];
+                                echo date('d/m/Y H:i', strtotime($waktu_ubah));
                                 ?>
                             </div>
                             <div class="timeline-content">
-                                Status diubah menjadi <strong><?php echo ucfirst($peminjaman['status']); ?></strong>
+                                Status diubah menjadi <strong><?php echo ucfirst(htmlspecialchars($peminjaman['status'])); ?></strong>
                             </div>
                         </div>
                         <?php endif; ?>
                         
-                        <?php if ($peminjaman['tanggal_kembali']): ?>
+                        <?php if (!empty($peminjaman['tanggal_kembali']) && $peminjaman['status'] == 'dikembalikan'): ?>
                         <div class="timeline-item">
                             <div class="timeline-date"><?php echo date('d/m/Y H:i', strtotime($peminjaman['tanggal_kembali'])); ?></div>
                             <div class="timeline-content">Alat dikembalikan</div>

@@ -26,8 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_SESSION['old'] = $_POST;
     } else {
         try {
-            $db = new Database();
-            $conn = $db->getConnection();
+            $conn = Database::getConnection();
             
             // PERBAIKAN 3: Konversi ke PDO
             // Check if username already exists

@@ -1,19 +1,24 @@
-
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php';
+
+// --- PERUBAHAN: Ambil data user dari session untuk konsistensi (sama seperti laporan_peminjaman.php) ---
+ $user_data = $_SESSION['user'] ?? [];
+ $user_name = htmlspecialchars($user_data['nama'] ?? 'Petugas');
+// --- AKHIR PERUBAHAN ---
 
 // Check login and role
 check_login();
 check_role('petugas');
 
-$db = new Database();
-$conn = $db->getConnection();
+// Get database connection using singleton pattern
+ $conn = Database::getConnection();
 
 // Handle approval/rejection
 if (isset($_POST['action']) && isset($_POST['peminjaman_id'])) {
-    $peminjaman_id = $_POST['peminjaman_id'];
-    $action = $_POST['action'];
+    $peminjaman_id = (int)$_POST['peminjaman_id'];
+    $action = sanitize_input($_POST['action']);
     $keterangan = sanitize_input($_POST['keterangan']);
     
     if ($action == 'approve') {
@@ -24,50 +29,56 @@ if (isset($_POST['action']) && isset($_POST['peminjaman_id'])) {
         log_activity($_SESSION['user_id'], "Menolak peminjaman ID: $peminjaman_id");
     }
     
-    $stmt = $conn->prepare("UPDATE peminjaman SET status = ?, keterangan = ? WHERE id = ?");
-    $stmt->bind_param("ssi", $status, $keterangan, $peminjaman_id);
-    $stmt->execute();
-    $stmt->close();
-    
-    header("Location: peminjaman.php");
-    exit();
+    try {
+        $stmt = $conn->prepare("UPDATE peminjaman SET status = ?, keterangan = ? WHERE id = ?");
+        $stmt->execute([$status, $keterangan, $peminjaman_id]);
+        
+        $_SESSION['success'] = "Status peminjaman berhasil diperbarui";
+        header("Location: peminjaman.php");
+        exit();
+    } catch (PDOException $e) {
+        $_SESSION['error'] = "Terjadi kesalahan: " . $e->getMessage();
+        header("Location: peminjaman.php");
+        exit();
+    }
 }
 
 // Handle date filter
-$start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
-$end_date = isset($_GET['end_date']) ? $_GET['end_date'] : date('Y-m-t');
+ $start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
+ $end_date = isset($_GET['end_date']) ? $_GET['end_date'] : date('Y-m-t');
 
 // Get all peminjaman with user and alat info and filtering
-$query = "SELECT p.*, u.nama as nama_user, a.nama_alat FROM peminjaman p JOIN users u ON p.user_id = u.id JOIN alat a ON p.alat_id = a.id WHERE p.created_at BETWEEN ? AND ? ORDER BY p.created_at DESC";
-$stmt = $conn->prepare($query);
-$stmt->bind_param("ss", $start_date, $end_date);
-$stmt->execute();
-$result = $stmt->get_result();
+try {
+    $query = "SELECT p.*, u.nama as nama_user, a.nama_alat 
+              FROM peminjaman p 
+              JOIN users u ON p.user_id = u.id 
+              JOIN alat a ON p.alat_id = a.id 
+              WHERE p.created_at BETWEEN ? AND ? 
+              ORDER BY p.created_at DESC";
+    $stmt = $conn->prepare($query);
+    $stmt->execute([$start_date, $end_date]);
+    $peminjaman_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get statistics
-$stmt_total = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE created_at BETWEEN ? AND ?");
-$stmt_total->bind_param("ss", $start_date, $end_date);
-$stmt_total->execute();
-$result_total = $stmt_total->get_result();
-$total_transaksi = $result_total->fetch_assoc()['total'];
+    // Get statistics
+    $stmt_total = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE created_at BETWEEN ? AND ?");
+    $stmt_total->execute([$start_date, $end_date]);
+    $total_transaksi = $stmt_total->fetchColumn();
 
-$stmt_pending = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'pending' AND created_at BETWEEN ? AND ?");
-$stmt_pending->bind_param("ss", $start_date, $end_date);
-$stmt_pending->execute();
-$result_pending = $stmt_pending->get_result();
-$total_pending = $result_pending->fetch_assoc()['total'];
+    $stmt_pending = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'pending' AND created_at BETWEEN ? AND ?");
+    $stmt_pending->execute([$start_date, $end_date]);
+    $total_pending = $stmt_pending->fetchColumn();
 
-$stmt_approved = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'disetujui' AND created_at BETWEEN ? AND ?");
-$stmt_approved->bind_param("ss", $start_date, $end_date);
-$stmt_approved->execute();
-$result_approved = $stmt_approved->get_result();
-$total_disetujui = $result_approved->fetch_assoc()['total'];
+    $stmt_approved = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'disetujui' AND created_at BETWEEN ? AND ?");
+    $stmt_approved->execute([$start_date, $end_date]);
+    $total_disetujui = $stmt_approved->fetchColumn();
 
-$stmt_total_alat = $conn->prepare("SELECT SUM(jumlah) as total FROM peminjaman WHERE created_at BETWEEN ? AND ?");
-$stmt_total_alat->bind_param("ss", $start_date, $end_date);
-$stmt_total_alat->execute();
-$result_total_alat = $stmt_total_alat->get_result();
-$total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
+    $stmt_total_alat = $conn->prepare("SELECT SUM(jumlah) as total FROM peminjaman WHERE created_at BETWEEN ? AND ?");
+    $stmt_total_alat->execute([$start_date, $end_date]);
+    $total_alat = $stmt_total_alat->fetchColumn() ?: 0;
+
+} catch (PDOException $e) {
+    die("Database error: " . $e->getMessage());
+}
 ?>
 
 <!DOCTYPE html>
@@ -522,6 +533,24 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
             font-size: 0.8rem;
             border-radius: 6px;
         }
+
+        /* Alert styling */
+        .alert {
+            border-radius: 10px;
+            border: none;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background-color: rgba(6, 255, 165, 0.1);
+            color: #0a5f36;
+        }
+
+        .alert-danger {
+            background-color: rgba(251, 86, 7, 0.1);
+            color: #a53708;
+        }
     </style>
 </head>
 <body>
@@ -529,7 +558,7 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -578,11 +607,11 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
                 <h1 class="page-title">Data Peminjaman</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo $user_name; ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($user_name, 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -591,6 +620,25 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
                 </div>
             </div>
         </div>
+
+        <!-- Success/Error Messages -->
+        <?php if (isset($_SESSION['success'])): ?>
+            <div class="alert alert-success">
+                <?php 
+                echo htmlspecialchars($_SESSION['success']); 
+                unset($_SESSION['success']);
+                ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger">
+                <?php 
+                echo htmlspecialchars($_SESSION['error']); 
+                unset($_SESSION['error']);
+                ?>
+            </div>
+        <?php endif; ?>
 
         <!-- Statistics Cards -->
         <div class="row">
@@ -654,11 +702,11 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
                 <div class="row">
                     <div class="col-md-4">
                         <label for="start_date" class="form-label">Tanggal Mulai</label>
-                        <input type="date" class="form-control" id="start_date" name="start_date" value="<?php echo $start_date; ?>" required>
+                        <input type="date" class="form-control" id="start_date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" required>
                     </div>
                     <div class="col-md-4">
                         <label for="end_date" class="form-label">Tanggal Selesai</label>
-                        <input type="date" class="form-control" id="end_date" name="end_date" value="<?php echo $end_date; ?>" required>
+                        <input type="date" class="form-control" id="end_date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" required>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">&nbsp;</label><br>
@@ -682,6 +730,7 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
                 <span class="text-muted">Periode: <?php echo format_tanggal($start_date); ?> - <?php echo format_tanggal($end_date); ?></span>
             </div>
             <div class="card-body">
+                <?php if (count($peminjaman_data) > 0): ?>
                 <div class="table-responsive">
                     <table class="table-custom">
                         <thead>
@@ -696,13 +745,13 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
                             </tr>
                         </thead>
                         <tbody>
-                            <?php $no = 1; while ($peminjaman = $result->fetch_assoc()): ?>
+                            <?php $no = 1; foreach ($peminjaman_data as $peminjaman): ?>
                             <tr>
                                 <td><?php echo $no++; ?></td>
-                                <td><?php echo $peminjaman['nama_user']; ?></td>
-                                <td><?php echo $peminjaman['nama_alat']; ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['nama_user']); ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></td>
                                 <td><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></td>
-                                <td><?php echo $peminjaman['jumlah']; ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['jumlah']); ?></td>
                                 <td>
                                     <span class="badge bg-<?php 
                                         echo $peminjaman['status'] == 'disetujui' ? 'success' : 
@@ -710,7 +759,7 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
                                             ($peminjaman['status'] == 'dipinjam' ? 'primary' : 
                                             ($peminjaman['status'] == 'dikembalikan' ? 'info' : 'warning'))); 
                                     ?>">
-                                        <?php echo ucfirst($peminjaman['status']); ?>
+                                        <?php echo htmlspecialchars(ucfirst($peminjaman['status'])); ?>
                                     </span>
                                 </td>
                                 <td>
@@ -732,10 +781,16 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
                                     </div>
                                 </td>
                             </tr>
-                            <?php endwhile; ?>
+                            <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
+                <?php else: ?>
+                <div class="text-center py-4">
+                    <i data-lucide="inbox" style="width: 48px; height: 48px; color: #ccc;"></i>
+                    <p class="mt-2 text-muted">Tidak ada data peminjaman pada periode ini</p>
+                </div>
+                <?php endif; ?>
             </div>
         </div>
     </main>
@@ -777,15 +832,19 @@ $total_alat = $result_total_alat->fetch_assoc()['total'] ?: 0;
         });
 
         // Handle dropdown arrows rotation
-        document.querySelectorAll('.dropdown-toggle').forEach(item => {
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(item => {
             item.addEventListener('click', function() {
-                const expanded = this.getAttribute('aria-expanded') === 'true';
+                const target = document.querySelector(this.getAttribute('data-bs-target'));
+                const expanded = target.classList.contains('show');
+                
+                // Update aria-expanded
                 this.setAttribute('aria-expanded', !expanded);
-
-                // Reinitialize Lucide icons to update arrow rotation
-                setTimeout(() => {
-                    lucide.createIcons();
-                }, 10);
+                
+                // Rotate arrow
+                const arrow = this.querySelector('.menu-arrow');
+                if (arrow) {
+                    arrow.style.transform = expanded ? 'rotate(0deg)' : 'rotate(180deg)';
+                }
             });
         });
 

@@ -1,13 +1,18 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('petugas');
 
- $db = new Database();
- $conn = $db->getConnection();
+// Ambil data user dari session untuk konsistensi
+ $user_data = $_SESSION['user'] ?? [];
+ $user_name = htmlspecialchars($user_data['nama'] ?? 'Petugas');
+
+// PERBAIKAN: Gunakan metode statis getConnection() untuk mendapatkan koneksi PDO secara langsung
+ $conn = Database::getConnection();
 
 // Handle date filter
  $start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
@@ -20,33 +25,27 @@ check_role('petugas');
           WHERE p.tanggal_pinjam BETWEEN ? AND ? 
           ORDER BY p.tanggal_pinjam DESC";
  $stmt = $conn->prepare($query);
- $stmt->bind_param("ss", $start_date, $end_date);
- $stmt->execute();
- $result = $stmt->get_result();
+ $stmt->execute([$start_date, $end_date]);
+ $peminjaman_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get statistics for the period
- $stmt_total = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE tanggal_pinjam BETWEEN ? AND ?");
- $stmt_total->bind_param("ss", $start_date, $end_date);
- $stmt_total->execute();
- $total_transaksi = $stmt_total->get_result()->fetch_assoc()['total'];
+ $stmt_total = $conn->prepare("SELECT COUNT(*) FROM peminjaman WHERE tanggal_pinjam BETWEEN ? AND ?");
+ $stmt_total->execute([$start_date, $end_date]);
+ $total_transaksi = $stmt_total->fetchColumn();
 
- $stmt_alat = $conn->prepare("SELECT SUM(jumlah) as total FROM peminjaman WHERE tanggal_pinjam BETWEEN ? AND ?");
- $stmt_alat->bind_param("ss", $start_date, $end_date);
- $stmt_alat->execute();
- $total_alat = $stmt_alat->get_result()->fetch_assoc()['total'] ?: 0;
+ $stmt_alat = $conn->prepare("SELECT SUM(jumlah) FROM peminjaman WHERE tanggal_pinjam BETWEEN ? AND ?");
+ $stmt_alat->execute([$start_date, $end_date]);
+ $total_alat = $stmt_alat->fetchColumn() ?: 0;
 
 // Get status statistics
- $stmt_approved = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'disetujui' AND tanggal_pinjam BETWEEN ? AND ?");
- $stmt_approved->bind_param("ss", $start_date, $end_date);
- $stmt_approved->execute();
- $total_approved = $stmt_approved->get_result()->fetch_assoc()['total'];
+ $stmt_approved = $conn->prepare("SELECT COUNT(*) FROM peminjaman WHERE status = 'disetujui' AND tanggal_pinjam BETWEEN ? AND ?");
+ $stmt_approved->execute([$start_date, $end_date]);
+ $total_approved = $stmt_approved->fetchColumn();
 
- $stmt_pending = $conn->prepare("SELECT COUNT(*) as total FROM peminjaman WHERE status = 'pending' AND tanggal_pinjam BETWEEN ? AND ?");
- $stmt_pending->bind_param("ss", $start_date, $end_date);
- $stmt_pending->execute();
- $total_pending = $stmt_pending->get_result()->fetch_assoc()['total'];
+ $stmt_pending = $conn->prepare("SELECT COUNT(*) FROM peminjaman WHERE status = 'pending' AND tanggal_pinjam BETWEEN ? AND ?");
+ $stmt_pending->execute([$start_date, $end_date]);
+ $total_pending = $stmt_pending->fetchColumn();
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -56,6 +55,7 @@ check_role('petugas');
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <!-- CSS tidak berubah, jadi saya biarkan seperti semula -->
     <style>
         :root {
             --primary-color: #4361ee;
@@ -572,7 +572,7 @@ check_role('petugas');
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -621,11 +621,12 @@ check_role('petugas');
                 <h1 class="page-title">Laporan Peminjaman</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <!-- PERBAIKAN 4: Gunakan variabel $user_name yang sudah aman -->
+                <span style="margin-right: 10px;">Selamat datang, <?php echo $user_name; ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($user_name, 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -697,11 +698,11 @@ check_role('petugas');
                 <div class="row">
                     <div class="col-md-4">
                         <label for="start_date" class="form-label">Tanggal Mulai</label>
-                        <input type="date" class="form-control" id="start_date" name="start_date" value="<?php echo $start_date; ?>" required>
+                        <input type="date" class="form-control" id="start_date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" required>
                     </div>
                     <div class="col-md-4">
                         <label for="end_date" class="form-label">Tanggal Selesai</label>
-                        <input type="date" class="form-control" id="end_date" name="end_date" value="<?php echo $end_date; ?>" required>
+                        <input type="date" class="form-control" id="end_date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" required>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">&nbsp;</label><br>
@@ -743,15 +744,17 @@ check_role('petugas');
                             <?php 
                             $no = 1; 
                             $total_peminjaman = 0; 
-                            if ($result->num_rows > 0):
-                                while ($peminjaman = $result->fetch_assoc()): 
+                            // PERBAIKAN 5: Cek array $peminjaman_list dan gunakan foreach
+                            if (!empty($peminjaman_list)):
+                                foreach ($peminjaman_list as $peminjaman): 
                             ?>
                             <tr>
                                 <td><?php echo $no++; ?></td>
                                 <td><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></td>
-                                <td><?php echo $peminjaman['nama_user']; ?></td>
-                                <td><?php echo $peminjaman['nama_alat']; ?></td>
-                                <td><?php echo $peminjaman['jumlah']; ?></td>
+                                <!-- PERBAIKAN 6: Tambahkan htmlspecialchars untuk keamanan -->
+                                <td><?php echo htmlspecialchars($peminjaman['nama_user']); ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['jumlah']); ?></td>
                                 <td>
                                     <span class="status-badge <?php 
                                         echo $peminjaman['status'] == 'disetujui' ? 'success' : 
@@ -765,14 +768,14 @@ check_role('petugas');
                                                 ($peminjaman['status'] == 'dipinjam' ? 'package' : 
                                                 ($peminjaman['status'] == 'dikembalikan' ? 'rotate-ccw' : 'clock'))); 
                                         ?>" style="width: 14px; height: 14px;"></i>
-                                        <?php echo ucfirst($peminjaman['status']); ?>
+                                        <?php echo ucfirst(htmlspecialchars($peminjaman['status'])); ?>
                                     </span>
                                 </td>
-                                <td><?php echo $peminjaman['keterangan'] ?: '-'; ?></td>
+                                <td><?php echo htmlspecialchars($peminjaman['keterangan'] ?: '-'); ?></td>
                             </tr>
                             <?php 
                             $total_peminjaman += $peminjaman['jumlah'];
-                            endwhile; 
+                            endforeach; 
                             else:
                             ?>
                             <tr>
@@ -780,7 +783,7 @@ check_role('petugas');
                             </tr>
                             <?php endif; ?>
                         </tbody>
-                        <?php if ($result->num_rows > 0): ?>
+                        <?php if (!empty($peminjaman_list)): ?>
                         <tfoot>
                             <tr style="background-color: #f8f9fa; font-weight: 400;">
                                 <td colspan="4">Total</td>
@@ -808,7 +811,8 @@ check_role('petugas');
                     </div>
                     <div class="summary-item">
                         <div class="summary-label">Dicetak oleh</div>
-                        <div class="summary-value"><?php echo $_SESSION['nama']; ?></div>
+                        <!-- PERBAIKAN 7: Gunakan variabel $user_name -->
+                        <div class="summary-value"><?php echo $user_name; ?></div>
                     </div>
                 </div>
             </div>

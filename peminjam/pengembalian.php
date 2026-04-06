@@ -1,39 +1,28 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Pastikan hanya peminjam yang bisa akses
 check_login();
 check_role('peminjam');
 
- $db = new Database();
- $conn = $db->getConnection();
-
-// Proses pengajuan pengembalian
-if (isset($_POST['submit_pengajuan'])) {
-    $peminjaman_id = $_POST['peminjaman_id'];
-    $current_user_id = $_SESSION['user_id'];
-
-    // Keamanan: Pastikan peminjaman ini milik user yang sedang login
-    $stmt = $conn->prepare("UPDATE peminjaman SET status = 'menunggu_konfirmasi' WHERE id = ? AND user_id = ?");
-    $stmt->bind_param("ii", $peminjaman_id, $current_user_id);
-    
-    if ($stmt->execute()) {
-        header('Location: pengembalian.php?success=1');
-        exit();
-    } else {
-        $error = "Gagal mengajukan pengembalian. Silakan coba lagi.";
-    }
+// --- PERBAIKAN 1: Ambil data user dari sesi ---
+ $user_data = $_SESSION['user'] ?? null;
+if ($user_data === null) {
+    die("Error: Sesi tidak valid. Silakan login ulang.");
 }
+ $current_user_id = $user_data['id'];
 
-// --- PERBAIKAN QUERY ---
-// Query untuk menampilkan peminjaman aktif milik user yang login
-// Kita ambil tanggal_kembali untuk menghitung durasi
- $stmt = $conn->prepare("
+// --- PERBAIKAN 2: Dapatkan koneksi PDO langsung dari metode statis getConnection() ---
+ $conn = Database::getConnection();
+
+// --- PERBAIKAN 3: Siapkan query dengan placeholder PDO ---
+ $sql = "
     SELECT
         p.id,
         p.tanggal_pinjam,
-        p.tanggal_kembali, -- Ambil tanggal kembali
+        p.tanggal_kembali,
         a.nama_alat,
         p.jumlah
     FROM
@@ -41,13 +30,25 @@ if (isset($_POST['submit_pengajuan'])) {
     JOIN
         alat a ON p.alat_id = a.id
     WHERE
-        p.user_id = ? AND p.status = 'disetujui'
+        p.user_id = :user_id AND p.status = 'disetujui'
     ORDER BY
         p.tanggal_pinjam DESC
-");
- $stmt->bind_param("i", $_SESSION['user_id']);
- $stmt->execute();
- $result = $stmt->get_result();
+";
+
+try {
+    $stmt = $conn->prepare($sql);
+    
+    // --- PERBAIKAN 4: Ikat parameter menggunakan bindParam() PDO ---
+    $stmt->bindParam(':user_id', $current_user_id, PDO::PARAM_INT);
+    $stmt->execute();
+
+    // --- PERBAIKAN 5: Ambil semua hasil ke dalam array ---
+    $peminjaman_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
+    // Di lingkungan produksi, sebaiknya log error instead of menampilkannya
+    die("Error saat mengambil data peminjaman: " . $e->getMessage());
+}
 ?>
 
 <!DOCTYPE html>
@@ -90,6 +91,7 @@ if (isset($_POST['submit_pengajuan'])) {
         .btn-primary-custom { background-color: var(--primary-color); color: white; }
         .btn-primary-custom:hover { background-color: var(--secondary-color); color: white; }
         .btn-sm-custom { padding: 5px 12px; font-size: 0.8rem; }
+        .form-control-sm, .form-select-sm { font-size: 0.85rem; }
     </style>
 </head>
 <body>
@@ -97,7 +99,7 @@ if (isset($_POST['submit_pengajuan'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -134,10 +136,10 @@ if (isset($_POST['submit_pengajuan'])) {
                 <h1 class="page-title">Ajukan Pengembalian</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($user_data['nama']); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                        <div class="user-avatar"><?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?></div>
+                        <div class="user-avatar"><?php echo strtoupper(substr($user_data['nama'], 0, 1)); ?></div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
                         <li><a class="dropdown-item" href="../auth/logout.php">Logout</a></li>
@@ -147,17 +149,17 @@ if (isset($_POST['submit_pengajuan'])) {
         </div>
 
         <!-- Alert Messages -->
-        <?php if (isset($_GET['success'])): ?>
+        <?php if (isset($_SESSION['success'])): ?>
             <div class="alert alert-success alert-dismissible fade show" role="alert">
                 <i data-lucide="check-circle" style="width: 16px; height: 16px; margin-right: 8px;"></i>
-                Pengajuan pengembalian berhasil dikirim! Silakan tunggu konfirmasi dari petugas.
+                <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
-        <?php if (isset($error)): ?>
+        <?php if (isset($_SESSION['error'])): ?>
             <div class="alert alert-danger alert-dismissible fade show" role="alert">
                 <i data-lucide="alert-circle" style="width: 16px; height: 16px; margin-right: 8px;"></i>
-                <?php echo $error; ?>
+                <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
@@ -165,8 +167,8 @@ if (isset($_POST['submit_pengajuan'])) {
         <!-- Table -->
         <div class="activity-card">
             <div class="card-header-custom">
-                <h5 class="mb-0">Barang Yang Sedang Dipinjam</h5>
-                <span class="text-muted">Klik tombol untuk mengajukan pengembalian</span>
+                <h5 class="mb-0">Form Ajukan Pengembalian</h5>
+                <span class="text-muted">Isi form untuk setiap alat yang akan dikembalikan</span>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -178,41 +180,55 @@ if (isset($_POST['submit_pengajuan'])) {
                                 <th>Jumlah</th>
                                 <th>Tgl. Pinjam</th>
                                 <th>Durasi</th>
-                                <th>Tgl. Kembali</th> <!-- Header diubah -->
+                                <th>Tgl. Kembali (Diajukan)</th>
+                                <th>Kondisi</th>
+                                <th>Keterangan</th>
                                 <th>Aksi</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php if ($result->num_rows > 0): ?>
-                                <?php $no = 1; while ($peminjaman = $result->fetch_assoc()): ?>
+                            <?php if (!empty($peminjaman_list)): ?>
+                                <?php $no = 1; foreach ($peminjaman_list as $peminjaman): ?>
                                     <?php
-                                    // --- PERBAIKAN LOGIKA PHP ---
-                                    // Hitung durasi di sini menggunakan objek DateTime
                                     $date_pinjam = new DateTime($peminjaman['tanggal_pinjam']);
-                                    $date_kembali = new DateTime($peminjaman['tanggal_kembali']); // Gunakan tanggal_kembali
+                                    $date_kembali = new DateTime($peminjaman['tanggal_kembali']);
                                     $durasi = $date_kembali->diff($date_pinjam)->days;
+                                    $today = date('Y-m-d');
                                     ?>
                                 <tr>
                                     <td><?php echo $no++; ?></td>
-                                    <td><?php echo $peminjaman['nama_alat']; ?></td>
-                                    <td><?php echo $peminjaman['jumlah']; ?></td>
+                                    <td><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></td>
+                                    <td><?php echo htmlspecialchars($peminjaman['jumlah']); ?></td>
                                     <td><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></td>
                                     <td><?php echo $durasi; ?> Hari</td>
-                                    <td><?php echo format_tanggal($peminjaman['tanggal_kembali']); ?></td> <!-- Data diubah -->
+                                    <td><?php echo format_tanggal($peminjaman['tanggal_kembali']); ?></td>
                                     <td>
-                                        <form method="POST" action="" onsubmit="return confirm('Apakah Anda yakin ingin mengajukan pengembalian untuk alat ini?');">
+                                        <form method="POST" action="proses_pengembalian.php" style="margin: 0;">
                                             <input type="hidden" name="peminjaman_id" value="<?php echo $peminjaman['id']; ?>">
-                                            <button type="submit" name="submit_pengajuan" class="btn-custom btn-primary-custom btn-sm-custom">
+                                            <input type="hidden" name="tanggal_kembali" value="<?php echo $today; ?>">
+                                            <select name="kondisi_kembali" class="form-select form-select-sm" required>
+                                                <option value="">-- Pilih --</option>
+                                                <option value="Baik">Baik</option>
+                                                <option value="Rusak Ringan">Rusak Ringan</option>
+                                                <option value="Rusak Berat">Rusak Berat</option>
+                                                <option value="Hilang">Hilang</option>
+                                            </select>
+                                    </td>
+                                    <td>
+                                            <textarea name="keterangan" class="form-control form-control-sm" rows="1" placeholder="Opsional"></textarea>
+                                    </td>
+                                    <td>
+                                            <button type="submit" name="submit_pengajuan" class="btn-custom btn-primary-custom btn-sm-custom w-100">
                                                 <i data-lucide="send" style="width: 14px; height: 14px; margin-right: 4px;"></i>
-                                                Ajukan Pengembalian
+                                                Ajukan
                                             </button>
                                         </form>
                                     </td>
                                 </tr>
-                                <?php endwhile; ?>
+                                <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="7" class="text-center">Anda tidak memiliki barang yang sedang dipinjam.</td>
+                                    <td colspan="9" class="text-center">Anda tidak memiliki barang yang sedang dipinjam.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>

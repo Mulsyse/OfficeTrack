@@ -1,18 +1,22 @@
 <?php
 session_start();
 require_once '../config/database.php';
-
-
+require_once '../config/helpers.php';
 // Pastikan hanya petugas yang bisa akses
 check_login();
 check_role('petugas');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERUBAHAN PENTING DI SINI ---
+// Langsung dapatkan objek PDO dari metode statis kelas Database
+ $conn = Database::getConnection();
+// ---------------------------------
+ $user_data = $_SESSION['user'] ?? [];
+ $user_name = htmlspecialchars($user_data['nama'] ?? 'Petugas');
+// --- AKHIR PERUBAHAN ---
 
 // Proses konfirmasi pengembalian
 if (isset($_POST['submit_konfirmasi'])) {
-    $conn->begin_transaction();
+    $conn->beginTransaction();
     try {
         $peminjaman_id = $_POST['peminjaman_id'];
         $kondisi_kembali = $_POST['kondisi_kembali'];
@@ -21,24 +25,24 @@ if (isset($_POST['submit_konfirmasi'])) {
 
         // 1. Ambil data peminjaman untuk update stok
         $stmt_peminjaman = $conn->prepare("SELECT alat_id, jumlah FROM peminjaman WHERE id = ?");
-        $stmt_peminjaman->bind_param("i", $peminjaman_id);
-        $stmt_peminjaman->execute();
-        $data_peminjaman = $stmt_peminjaman->get_result()->fetch_assoc();
+        $stmt_peminjaman->execute([$peminjaman_id]);
+        $data_peminjaman = $stmt_peminjaman->fetch(PDO::FETCH_ASSOC);
+
+        if (!$data_peminjaman) {
+            throw new Exception("Data peminjaman tidak ditemukan.");
+        }
 
         // 2. Update stok alat
         $stmt_update_stok = $conn->prepare("UPDATE alat SET stok = stok + ? WHERE id = ?");
-        $stmt_update_stok->bind_param("ii", $data_peminjaman['jumlah'], $data_peminjaman['alat_id']);
-        $stmt_update_stok->execute();
+        $stmt_update_stok->execute([$data_peminjaman['jumlah'], $data_peminjaman['alat_id']]);
 
         // 3. Insert ke tabel pengembalian
         $stmt_pengembalian = $conn->prepare("INSERT INTO pengembalian (peminjaman_id, tanggal_kembali, kondisi_kembali, denda, keterangan) VALUES (?, NOW(), ?, ?, ?)");
-        $stmt_pengembalian->bind_param("isis", $peminjaman_id, $kondisi_kembali, $denda, $keterangan);
-        $stmt_pengembalian->execute();
+        $stmt_pengembalian->execute([$peminjaman_id, $kondisi_kembali, $denda, $keterangan]);
 
         // 4. Update status peminjaman
         $stmt_update_status = $conn->prepare("UPDATE peminjaman SET status = 'dikembalikan' WHERE id = ?");
-        $stmt_update_status->bind_param("i", $peminjaman_id);
-        $stmt_update_status->execute();
+        $stmt_update_status->execute([$peminjaman_id]);
 
         $conn->commit();
         header('Location: pengembalian.php?success=1');
@@ -60,10 +64,9 @@ if (isset($_POST['submit_konfirmasi'])) {
     ORDER BY p.tanggal_pinjam ASC
 ");
  $stmt->execute();
- $result = $stmt->get_result();
- $total_menunggu = $result->num_rows;
+ $peminjamans = $stmt->fetchAll(PDO::FETCH_ASSOC);
+ $total_menunggu = count($peminjamans);
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <!-- ... (Kopikan seluruh bagian <head> dan <style> dari file sebelumnya di sini) ... -->
@@ -140,7 +143,7 @@ if (isset($_POST['submit_konfirmasi'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -188,11 +191,13 @@ if (isset($_POST['submit_konfirmasi'])) {
                 </button>
                 <h1 class="page-title">Konfirmasi Pengembalian</h1>
             </div>
-            <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+           <div class="user-profile">
+                <span style="margin-right: 10px;">Selamat datang, <?php echo $user_name; ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                        <div class="user-avatar"><?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?></div>
+                        <div class="user-avatar">
+                            <?php echo htmlspecialchars(strtoupper(substr($user_name, 0, 1))); ?>
+                        </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
                         <li><a class="dropdown-item" href="../auth/logout.php">Logout</a></li>
@@ -287,8 +292,8 @@ if (isset($_POST['submit_konfirmasi'])) {
                 </tr>
             </thead>
             <tbody>
-    <?php if ($result->num_rows > 0): ?>
-    <?php $no = 1; while ($peminjaman = $result->fetch_assoc()): ?>
+    <?php if ($total_menunggu > 0): ?>
+    <?php $no = 1; foreach ($peminjamans as $peminjaman): ?>
     <?php
         // PERUBAHAN 1: Tidak perlu menghitung jatuh tempo lagi,
         // karena kolom 'tanggal_kembali' sudah menyimpan tanggalnya.
@@ -322,7 +327,7 @@ if (isset($_POST['submit_konfirmasi'])) {
             </button>
         </td>
     </tr>
-    <?php endwhile; ?>
+    <?php endforeach; ?>
 <?php else: ?>
     <tr>
         <td colspan="7" class="text-center">Tidak ada pengajuan pengembalian yang menunggu.</td>

@@ -1,26 +1,42 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
 // Check login and role
 check_login();
 check_role('peminjam');
 
- $db = new Database();
- $conn = $db->getConnection();
- $user_id = $_SESSION['user_id'];
+// --- PERBAIKAN: Ambil data session dengan aman ---
+// Gunakan operator null coalescing (??) untuk mencegah error jika variabel tidak ada
+// --- PERBAIKAN: Ambil data session dengan struktur yang BENAR ---
+// Akses data user dari dalam array $_SESSION['user']
+ $user_id = $_SESSION['user']['id'] ?? null;
+ $user_nama = $_SESSION['user']['nama'] ?? 'Pengguna';
+ $user_role = $_SESSION['user']['role'] ?? null; // Bisa juga diambil untuk keperluan lain
 
-// Get user's peminjaman
- $stmt = $conn->prepare("SELECT p.*, a.nama_alat FROM peminjaman p JOIN alat a ON p.alat_id = a.id WHERE p.user_id = ? ORDER BY p.created_at DESC");
- $stmt->bind_param("i", $user_id);
- $stmt->execute();
- $result = $stmt->get_result();
+// Jika user_id tetap tidak ada, ada masalah dengan sesi. Hentikan skrip.
+if ($user_id === null) {
+    die("Error: Sesi tidak valid. Silakan login ulang.");
+}
+// --- Koneksi Database ---
+ $conn = Database::getConnection(); 
 
- // Cek dan ambil pesan sukses dari session
+// --- Query Database ---
+ $sql = "SELECT p.*, a.nama_alat 
+       FROM peminjaman p 
+       JOIN alat a ON p.alat_id = a.id 
+       WHERE p.user_id = ? 
+       ORDER BY p.created_at DESC";
+ $stmt = $conn->prepare($sql);
+ $stmt->execute([$user_id]); 
+ $peminjaman_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Cek dan ambil pesan sukses dari session
  $popup_message = '';
 if (isset($_SESSION['success_message'])) {
     $popup_message = $_SESSION['success_message'];
-    unset($_SESSION['success_message']); // Hapus pesan agar tidak muncul lagi
+    unset($_SESSION['success_message']); 
 }
 ?>
 
@@ -34,6 +50,7 @@ if (isset($_SESSION['success_message'])) {
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
+        /* ... (Gaya CSS Anda tidak perlu diubah, jadi saya biarkan seperti itu) ... */
         :root {
             --primary-color: #4361ee;
             --secondary-color: #3f37c9;
@@ -438,42 +455,6 @@ if (isset($_SESSION['success_message'])) {
                 grid-template-columns: 1fr;
             }
         }
-
-        /* Filter Card */
-        .filter-card {
-            background-color: white;
-            border-radius: 10px;
-            padding: 25px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            margin-bottom: 25px;
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-        }
-
-        .filter-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-        }
-
-        .form-control, .form-select {
-            border: 1px solid #eaeaea;
-            border-radius: 8px;
-            padding: 10px 15px;
-            font-weight: 300;
-            transition: all 0.2s ease;
-        }
-
-        .form-control:focus, .form-select:focus {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 0.2rem rgba(67, 97, 238, 0.1);
-        }
-
-        .form-label {
-            font-weight: 400;
-            color: #495057;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-        }
     </style>
 </head>
 <body data-popup-message="<?php echo htmlspecialchars($popup_message, ENT_QUOTES, 'UTF-8'); ?>">
@@ -481,7 +462,7 @@ if (isset($_SESSION['success_message'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -518,11 +499,13 @@ if (isset($_SESSION['success_message'])) {
                 <h1 class="page-title">Peminjaman Saya</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang,
+                    <?php echo htmlspecialchars($_SESSION['user']['nama']); ?></span>
                 <div class="dropdown">
-                    <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown"
+                        data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo strtoupper(substr($_SESSION['user']['nama'], 0, 1)); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -534,16 +517,15 @@ if (isset($_SESSION['success_message'])) {
 
         <!-- Stats Cards -->
         <?php
-        // Calculate statistics
-        $total_peminjaman = $result->num_rows;
+        // --- PERBAIKAN 3: Hitung statistik dari array yang sudah di-fetch ---
+        $total_peminjaman = count($peminjaman_list);
         $disetujui = 0;
         $ditolak = 0;
         $dipinjam = 0;
         $dikembalikan = 0;
         
-        // Reset result pointer
-        $result->data_seek(0);
-        while ($p = $result->fetch_assoc()) {
+        // Loop melalui array untuk menghitung status
+        foreach ($peminjaman_list as $p) {
             switch($p['status']) {
                 case 'disetujui': $disetujui++; break;
                 case 'ditolak': $ditolak++; break;
@@ -551,8 +533,6 @@ if (isset($_SESSION['success_message'])) {
                 case 'dikembalikan': $dikembalikan++; break;
             }
         }
-        // Reset result pointer again
-        $result->data_seek(0);
         ?>
         
         <div class="stats-grid">
@@ -595,9 +575,9 @@ if (isset($_SESSION['success_message'])) {
         </div>
 
         <!-- Peminjaman Grid -->
-        <?php if ($result->num_rows > 0): ?>
+        <?php if (!empty($peminjaman_list)): ?>
             <div class="peminjaman-grid">
-                <?php $no = 1; while ($peminjaman = $result->fetch_assoc()): ?>
+                <?php foreach ($peminjaman_list as $peminjaman): ?>
                 <div class="peminjaman-card">
                     <div class="peminjaman-card-header">
                         <div>
@@ -651,7 +631,7 @@ if (isset($_SESSION['success_message'])) {
                         <?php endif; ?>
                     </div>
                 </div>
-                <?php endwhile; ?>
+                <?php endforeach; ?>
             </div>
         <?php else: ?>
             <div class="empty-state">

@@ -1,14 +1,29 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php'; // Pastikan functions.php di-include
 
 // Check login and role
 check_login();
 check_role('peminjam');
 
- $db = new Database();
- $conn = $db->getConnection();
- $user_id = $_SESSION['user_id'];
+// --- PERBAIKAN 1: Ambil data session dengan aman ---
+// --- KODE YANG SUDAH DIPERBAIKI ---
+// Ambil array 'user' dari sesi, jika tidak ada maka null
+ $user_data = $_SESSION['user'] ?? null;
+
+// Ambil data dari dalam array 'user'
+ $user_id = $user_data['id'] ?? null;
+ $user_nama = $user_data['nama'] ?? 'Pengguna';
+ $user_role = $user_data['role'] ?? null; // Ambil role juga
+
+// Jika user_id tidak ada, hentikan skrip
+if ($user_id === null) {
+    die("Error: Sesi tidak valid. Silakan login ulang.");
+}
+
+// Gunakan koneksi database PDO
+ $conn = Database::getConnection();
 
  $error = '';
  $success = '';
@@ -17,22 +32,19 @@ check_role('peminjam');
  $selected_alat = null;
 if (isset($_GET['alat_id'])) {
     $alat_id = $_GET['alat_id'];
+    // --- PERBAIKAN 2: Gunakan sintaks PDO ---
     $stmt = $conn->prepare("SELECT * FROM alat WHERE id = ? AND stok > 0");
-    $stmt->bind_param("i", $alat_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $selected_alat = $result->fetch_assoc();
-    $stmt->close();
+    $stmt->execute([$alat_id]); // Eksekusi dengan array parameter
+    $selected_alat = $stmt->fetch(PDO::FETCH_ASSOC); // Fetch langsung ke array asosiatif
 }
 
 // Get all available alat for dropdown
  $stmt_alat = $conn->prepare("SELECT a.*, k.nama_kategori FROM alat a LEFT JOIN kategori k ON a.kategori_id = k.id WHERE a.stok > 0 ORDER BY a.nama_alat");
  $stmt_alat->execute();
- $result_alat = $stmt_alat->get_result();
 
 // Handle form submission
-// Handle form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    error_log("DEBUG: User " . ($user_nama ?? 'N/A') . " (ID: " . ($user_id ?? 'N/A') . ", Role: " . ($user_role ?? 'N/A') . ") sedang mencoba meminjam alat ID: " . ($alat_id ?? 'N/A'));
     $alat_id = $_POST['alat_id'];
     $tanggal_pinjam = $_POST['tanggal_pinjam'];
     $tanggal_kembali = $_POST['tanggal_kembali'];
@@ -40,27 +52,29 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $keterangan = sanitize_input($_POST['keterangan']);
     
     // Validate stock
+    // --- PERBAIKAN 2: Gunakan sintaks PDO ---
     $stmt_stock = $conn->prepare("SELECT stok FROM alat WHERE id = ?");
-    $stmt_stock->bind_param("i", $alat_id);
-    $stmt_stock->execute();
-    $result_stock = $stmt_stock->get_result();
-    $alat_stock = $result_stock->fetch_assoc();
-    $stmt_stock->close();
+    $stmt_stock->execute([$alat_id]);
+    $alat_stock = $stmt_stock->fetch(PDO::FETCH_ASSOC);
     
-    if ($alat_stock['stok'] < $jumlah) {
+    if ($alat_stock && $alat_stock['stok'] < $jumlah) {
         $error = "Stok tidak mencukupi! Stok tersedia: " . $alat_stock['stok'];
     } else {
         // Insert peminjaman
+        // --- PERBAIKAN 2: Gunakan sintaks PDO ---
         $stmt = $conn->prepare("INSERT INTO peminjaman (user_id, alat_id, tanggal_pinjam, tanggal_kembali, jumlah, keterangan) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("iissis", $user_id, $alat_id, $tanggal_pinjam, $tanggal_kembali, $jumlah, $keterangan);
         
-        if ($stmt->execute()) {
+        if ($stmt->execute([$user_id, $alat_id, $tanggal_pinjam, $tanggal_kembali, $jumlah, $keterangan])) {
+
+            // Atur variabel sesi untuk keperluan trigger log_perubahan_alat
+            $conn->query("SET @logged_in_user_id = " . (int)$user_id);
+
             // Update stock
+            // --- PERBAIKAN 2: Gunakan sintaks PDO ---
             $stmt_update = $conn->prepare("UPDATE alat SET stok = stok - ? WHERE id = ?");
-            $stmt_update->bind_param("ii", $jumlah, $alat_id);
-            $stmt_update->execute();
-            $stmt_update->close();
+            $stmt_update->execute([$jumlah, $alat_id]);
             
+            // --- PERBAIKAN 3: Pastikan log_activity juga menggunakan PDO ---
             log_activity($user_id, "Mengajukan peminjaman alat ID: $alat_id");
             
             // Set pesan sukses ke session dan redirect
@@ -70,11 +84,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         } else {
             $error = "Gagal mengajukan peminjaman!";
         }
-        $stmt->close();
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -425,7 +437,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -462,11 +474,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <h1 class="page-title">Ajukan Peminjaman</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo htmlspecialchars($user_nama); ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($user_nama, 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -480,14 +492,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         <?php if ($error): ?>
             <div class="alert-custom alert-danger-custom">
                 <i data-lucide="alert-circle" style="margin-right: 10px;"></i>
-                <?php echo $error; ?>
+                <?php echo htmlspecialchars($error); ?>
             </div>
         <?php endif; ?>
         
         <?php if ($success): ?>
             <div class="alert-custom alert-success-custom">
                 <i data-lucide="check-circle" style="margin-right: 10px;"></i>
-                <?php echo $success; ?>
+                <?php echo htmlspecialchars($success); ?>
             </div>
         <?php endif; ?>
 
@@ -509,15 +521,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <div class="alat-preview-details">
                             <div class="alat-preview-item">
                                 <i data-lucide="tag"></i>
-                                <?php echo $selected_alat['nama_alat']; ?>
+                                <?php echo htmlspecialchars($selected_alat['nama_alat']); ?>
                             </div>
                             <div class="alat-preview-item">
                                 <i data-lucide="layers"></i>
-                                Stok: <?php echo $selected_alat['stok']; ?>
+                                Stok: <?php echo htmlspecialchars($selected_alat['stok']); ?>
                             </div>
                             <div class="alat-preview-item">
                                 <i data-lucide="check-circle"></i>
-                                <?php echo ucfirst($selected_alat['kondisi']); ?>
+                                <?php echo htmlspecialchars(ucfirst($selected_alat['kondisi'])); ?>
                             </div>
                         </div>
                     </div>
@@ -529,14 +541,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <i data-lucide="package" style="width: 16px; height: 16px; margin-right: 5px;"></i>
                                 Pilih Alat
                             </label>
-                            <select class="form-select" id="alat_id" name="alat_id" required>
+                            <select class="form-select" id="alat_id" name="alat_id" required <?php echo ($selected_alat) ? 'readonly' : ''; ?>>
                                 <option value="">Pilih Alat</option>
                                 <?php 
-                                $stmt_alat->data_seek(0);
-                                while ($alat = $result_alat->fetch_assoc()): 
+                                // --- PERBAIKAN 2: Fetch langsung dari statement object ---
+                                while ($alat = $stmt_alat->fetch(PDO::FETCH_ASSOC)): 
                                 ?>
                                 <option value="<?php echo $alat['id']; ?>" <?php echo ($selected_alat && $selected_alat['id'] == $alat['id']) ? 'selected' : ''; ?>>
-                                    <?php echo $alat['nama_alat']; ?> (Stok: <?php echo $alat['stok']; ?>)
+                                    <?php echo htmlspecialchars($alat['nama_alat']); ?> (Stok: <?php echo htmlspecialchars($alat['stok']); ?>)
                                 </option>
                                 <?php endwhile; ?>
                             </select>
@@ -637,7 +649,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <div style="display: flex; flex-direction: column; gap: 12px;">
                         <div style="display: flex; align-items: center;">
                             <i data-lucide="user" style="width: 16px; height: 16px; margin-right: 10px; color: var(--primary-color);"></i>
-                            <span style="font-weight: 300;">Nama: <strong><?php echo $_SESSION['nama']; ?></strong></span>
+                            <span style="font-weight: 300;">Nama: <strong><?php echo htmlspecialchars($user_nama); ?></strong></span>
                         </div>
                         <div style="display: flex; align-items: center;">
                             <i data-lucide="shield" style="width: 16px; height: 16px; margin-right: 10px; color: var(--primary-color);"></i>

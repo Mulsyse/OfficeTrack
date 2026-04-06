@@ -1,73 +1,97 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/helpers.php';
 
-// Check login and role
+
 check_login();
 check_role('petugas');
 
- $db = new Database();
- $conn = $db->getConnection();
+// --- PERUBAHAN: Ambil data user dari session untuk konsistensi ---
+ $user_data = $_SESSION['user'] ?? [];
+ $user_name = htmlspecialchars($user_data['nama'] ?? 'Petugas');
+// --- AKHIR PERUBAHAN ---
+
+// --- PERUBAHAN: Langsung dapatkan koneksi menggunakan metode statis ---
+ $conn = Database::getConnection();
+// --- AKHIR PERUBAHAN ---
 
 // Get peminjaman ID
- $id = isset($_GET['id']) ? $_GET['id'] : 0;
+ $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
 // Validate ID
-if (!is_numeric($id) || $id <= 0) {
+if ($id <= 0) {
     $_SESSION['error'] = "ID peminjaman tidak valid!";
     header('Location: peminjaman.php');
     exit();
 }
 
 // Get peminjaman data
+// --- PERUBAHAN: Menggunakan sintaks PDO ---
  $query = "SELECT p.*, u.nama as nama_user, u.username, a.nama_alat, a.kondisi as kondisi_alat 
-          FROM peminjaman p 
-          JOIN users u ON p.user_id = u.id 
-          JOIN alat a ON p.alat_id = a.id 
-          WHERE p.id = ?";
+         FROM peminjaman p 
+         JOIN users u ON p.user_id = u.id 
+         JOIN alat a ON p.alat_id = a.id 
+         WHERE p.id = ?";
  $stmt = $conn->prepare($query);
- $stmt->bind_param("i", $id);
- $stmt->execute();
- $result = $stmt->get_result();
+// Lewatkan parameter sebagai array ke execute()
+ $stmt->execute([$id]); 
+// Ambil hasil langsung dari statement
+ $peminjaman = $stmt->fetch(PDO::FETCH_ASSOC);
+// --- AKHIR PERUBAHAN ---
 
-if ($result->num_rows === 0) {
+if (!$peminjaman) {
     $_SESSION['error'] = "Data peminjaman tidak ditemukan!";
     header('Location: peminjaman.php');
     exit();
 }
-
- $peminjaman = $result->fetch_assoc();
 
 // Handle approval/rejection
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
     $keterangan = $_POST['keterangan'] ?? '';
     
-    if ($action === 'approve') {
-        $status = 'disetujui';
-        // Update stock
-        $update_stock = "UPDATE alat SET stok = stok - ? WHERE id = ?";
-        $stmt_stock = $conn->prepare($update_stock);
-        $stmt_stock->bind_param("ii", $peminjaman['jumlah'], $peminjaman['alat_id']);
-        $stmt_stock->execute();
-    } elseif ($action === 'reject') {
-        $status = 'ditolak';
-    }
+    // Start transaction
+    $conn->beginTransaction();
     
-    $update_query = "UPDATE peminjaman SET status = ?, keterangan = ? WHERE id = ?";
-    $stmt_update = $conn->prepare($update_query);
-    $stmt_update->bind_param("ssi", $status, $keterangan, $id);
-    
-    if ($stmt_update->execute()) {
+    try {
+        if ($action === 'approve') {
+            $status = 'disetujui';
+            // Update stock
+            // --- PERUBAHAN: Menggunakan sintaks PDO ---
+            $update_stock = "UPDATE alat SET stok = stok - ? WHERE id = ? AND stok >= ?";
+            $stmt_stock = $conn->prepare($update_stock);
+            $stmt_stock->execute([$peminjaman['jumlah'], $peminjaman['alat_id'], $peminjaman['jumlah']]);
+            
+            // Check if stock was updated
+            // Gunakan rowCount() untuk affected_rows
+            if ($stmt_stock->rowCount() === 0) {
+                throw new Exception("Stok tidak mencukupi!");
+            }
+            // --- AKHIR PERUBAHAN ---
+        } elseif ($action === 'reject') {
+            $status = 'ditolak';
+        }
+        
+        // --- PERUBAHAN: Menggunakan sintaks PDO ---
+        $update_query = "UPDATE peminjaman SET status = ?, keterangan = ?, updated_at = NOW() WHERE id = ?";
+        $stmt_update = $conn->prepare($update_query);
+        $stmt_update->execute([$status, $keterangan, $id]);
+        // --- AKHIR PERUBAHAN ---
+        
+        // Commit transaction
+        $conn->commit();
+        
         $_SESSION['success'] = "Peminjaman berhasil " . ($action === 'approve' ? 'disetujui' : 'ditolak') . "!";
         header('Location: peminjaman.php');
         exit();
-    } else {
-        $_SESSION['error'] = "Gagal memperbarui status peminjaman!";
+    } catch (Exception $e) {
+        // Rollback transaction
+        $conn->rollback();
+        $_SESSION['error'] = "Gagal memproses peminjaman: " . $e->getMessage();
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -419,7 +443,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <i data-lucide="layers"></i>
-            <span class="sidebar-logo">Sistem Peminjaman</span>
+            <span class="sidebar-logo">Office Track</span>
         </div>
         <nav class="sidebar-menu">
             <a href="dashboard.php" class="menu-item">
@@ -468,11 +492,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 <h1 class="page-title">Detail Peminjaman</h1>
             </div>
             <div class="user-profile">
-                <span style="margin-right: 10px;">Selamat datang, <?php echo $_SESSION['nama']; ?></span>
+                <span style="margin-right: 10px;">Selamat datang, <?php echo $user_name; ?></span>
                 <div class="dropdown">
                     <button class="btn btn-sm dropdown-toggle d-flex align-items-center" type="button" id="userDropdown" data-bs-toggle="dropdown" aria-expanded="false">
                         <div class="user-avatar">
-                            <?php echo strtoupper(substr($_SESSION['nama'], 0, 1)); ?>
+                            <?php echo htmlspecialchars(strtoupper(substr($user_name, 0, 1))); ?>
                         </div>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
@@ -481,6 +505,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 </div>
             </div>
         </div>
+
+        <!-- Alert Messages -->
+        <?php if (isset($_SESSION['success'])): ?>
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <?php 
+                echo htmlspecialchars($_SESSION['success']); 
+                unset($_SESSION['success']);
+                ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['error'])): ?>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <?php 
+                echo htmlspecialchars($_SESSION['error']); 
+                unset($_SESSION['error']);
+                ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
 
         <!-- Detail Card -->
         <div class="row">
@@ -495,23 +540,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Peminjam:</div>
-                        <div class="detail-value"><?php echo $peminjaman['nama_user']; ?> (<?php echo $peminjaman['username']; ?>)</div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['nama_user']); ?> (<?php echo htmlspecialchars($peminjaman['username']); ?>)</div>
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Alat:</div>
-                        <div class="detail-value"><?php echo $peminjaman['nama_alat']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></div>
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Tanggal Pinjam:</div>
-                        <div class="detail-value"><?php echo format_tanggal($peminjaman['tanggal_pinjam']); ?></div>
+                        <div class="detail-value"><?php echo date('d/m/Y', strtotime($peminjaman['tanggal_pinjam'])); ?></div>
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Tanggal Kembali:</div>
-                        <div class="detail-value"><?php echo $peminjaman['tanggal_kembali'] ? format_tanggal($peminjaman['tanggal_kembali']) : 'Belum dikembalikan'; ?></div>
+                        <div class="detail-value"><?php echo $peminjaman['tanggal_kembali'] ? date('d/m/Y', strtotime($peminjaman['tanggal_kembali'])) : 'Belum dikembalikan'; ?></div>
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Jumlah:</div>
-                        <div class="detail-value"><?php echo $peminjaman['jumlah']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['jumlah']); ?></div>
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Status:</div>
@@ -522,14 +567,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                                     ($peminjaman['status'] == 'dipinjam' ? 'primary' : 
                                     ($peminjaman['status'] == 'dikembalikan' ? 'info' : 'warning'))); 
                             ?>">
-                                <?php echo ucfirst($peminjaman['status']); ?>
+                                <?php echo htmlspecialchars(ucfirst($peminjaman['status'])); ?>
                             </span>
                         </div>
                     </div>
                     <?php if ($peminjaman['keterangan']): ?>
                     <div class="detail-row">
                         <div class="detail-label">Keterangan:</div>
-                        <div class="detail-value"><?php echo $peminjaman['keterangan']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['keterangan']); ?></div>
                     </div>
                     <?php endif; ?>
                     <div class="detail-row">
@@ -576,13 +621,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Nama Alat:</div>
-                        <div class="detail-value"><?php echo $peminjaman['nama_alat']; ?></div>
+                        <div class="detail-value"><?php echo htmlspecialchars($peminjaman['nama_alat']); ?></div>
                     </div>
                     <div class="detail-row">
                         <div class="detail-label">Kondisi Awal:</div>
                         <div class="detail-value">
                             <span class="badge bg-<?php echo $peminjaman['kondisi_alat'] == 'baik' ? 'success' : ($peminjaman['kondisi_alat'] == 'rusak_ringan' ? 'warning' : 'danger'); ?>">
-                                <?php echo ucfirst($peminjaman['kondisi_alat']); ?>
+                                <?php echo htmlspecialchars(ucfirst($peminjaman['kondisi_alat'])); ?>
                             </span>
                         </div>
                     </div>
@@ -602,15 +647,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         });
 
         // Handle dropdown arrows rotation
-        document.querySelectorAll('.dropdown-toggle').forEach(item => {
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(item => {
             item.addEventListener('click', function() {
-                const expanded = this.getAttribute('aria-expanded') === 'true';
+                const target = document.querySelector(this.getAttribute('data-bs-target'));
+                const expanded = target.classList.contains('show');
+                
+                // Update aria-expanded
                 this.setAttribute('aria-expanded', !expanded);
-
-                // Reinitialize Lucide icons to update arrow rotation
-                setTimeout(() => {
-                    lucide.createIcons();
-                }, 10);
+                
+                // Rotate arrow
+                const arrow = this.querySelector('.menu-arrow');
+                if (arrow) {
+                    arrow.style.transform = expanded ? 'rotate(0deg)' : 'rotate(180deg)';
+                }
             });
         });
 
